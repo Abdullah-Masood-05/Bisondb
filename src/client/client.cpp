@@ -58,6 +58,15 @@ std::vector<std::string> BisonClient::listCollections() {
     return out;
 }
 
+bool BisonClient::createCollection(const std::string& coll) {
+    Value resp = command(Value(docArg("createCollection", coll)));
+    return resp.asDocument().find("created")->get<bool>();
+}
+
+Value BisonClient::dbStats() {
+    return command(Value(Document{{"cmd", Value("dbStats")}}));
+}
+
 bool BisonClient::dropCollection(const std::string& coll) {
     Value resp = command(Value(docArg("dropCollection", coll)));
     return resp.asDocument().find("dropped")->get<bool>();
