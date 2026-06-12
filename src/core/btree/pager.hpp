@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <list>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -58,6 +59,10 @@ class Pager {
 
     // Whole-page copy in/out. `buf` must hold pageSize() bytes. Page ids must
     // be in [1, pageCount); page 0 is managed internally.
+    //
+    // Thread safety: readPage may be called from concurrent readers (it still
+    // mutates the LRU cache, so it locks internally); mutating calls are
+    // expected to be serialized by the owner (BTree's writer lock).
     void readPage(PageId id, uint8_t* buf);
     void writePage(PageId id, const uint8_t* buf);
 
@@ -91,6 +96,9 @@ class Pager {
     bool wasClean_ = true;
     bool dirtyMarked_ = false; // cleanFlag=0 already persisted this session
 
+    // Guards the cache structures and file handle: page reads under the
+    // tree's shared lock run concurrently, yet still mutate the LRU state.
+    std::mutex ioMutex_;
     std::list<CacheEntry> lru_; // front = most recently used
     std::unordered_map<PageId, std::list<CacheEntry>::iterator> cacheMap_;
 };

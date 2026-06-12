@@ -132,8 +132,8 @@ Pager::~Pager() {
 
 void Pager::checkDataPageId(PageId id) const {
     if (id == 0 || id >= pageCount_) {
-        throw PagerError("page id " + std::to_string(id) + " out of range (pageCount=" +
-                         std::to_string(pageCount_) + ")");
+        throw PagerError("page id " + std::to_string(id) +
+                         " out of range (pageCount=" + std::to_string(pageCount_) + ")");
     }
 }
 
@@ -203,12 +203,14 @@ void Pager::evictIfNeeded() {
 }
 
 void Pager::readPage(PageId id, uint8_t* buf) {
+    std::lock_guard lock(ioMutex_);
     checkDataPageId(id);
     CacheEntry& e = cacheFetch(id, /*loadFromFile=*/true);
     std::memcpy(buf, e.data.data(), pageSize_);
 }
 
 void Pager::writePage(PageId id, const uint8_t* buf) {
+    std::lock_guard lock(ioMutex_);
     checkDataPageId(id);
     ensureUncleanOnDisk();
     // The page is fully overwritten, so skip the disk read on a cache miss.
@@ -218,31 +220,36 @@ void Pager::writePage(PageId id, const uint8_t* buf) {
 }
 
 PageId Pager::allocPage() {
+    std::lock_guard lock(ioMutex_);
     ensureUncleanOnDisk();
     if (freeListHead_ != 0) {
         PageId id = freeListHead_;
-        std::vector<uint8_t> buf(pageSize_);
-        readPage(id, buf.data());
-        freeListHead_ = loadU32(buf.data());
+        CacheEntry& e = cacheFetch(id, /*loadFromFile=*/true);
+        freeListHead_ = loadU32(e.data.data());
         return id;
     }
     return pageCount_++;
 }
 
 void Pager::freePage(PageId id) {
+    std::lock_guard lock(ioMutex_);
     checkDataPageId(id);
-    std::vector<uint8_t> buf(pageSize_, 0);
-    storeU32(buf.data(), freeListHead_);
-    writePage(id, buf.data());
+    ensureUncleanOnDisk();
+    CacheEntry& e = cacheFetch(id, /*loadFromFile=*/false);
+    std::memset(e.data.data(), 0, pageSize_);
+    storeU32(e.data.data(), freeListHead_);
+    e.dirty = true;
     freeListHead_ = id;
 }
 
 void Pager::setRootPage(PageId id) {
+    std::lock_guard lock(ioMutex_);
     ensureUncleanOnDisk();
     rootPage_ = id;
 }
 
 void Pager::flushAll() {
+    std::lock_guard lock(ioMutex_);
     for (CacheEntry& e : lru_) {
         if (e.dirty) {
             filePut(e.id, e.data.data());
