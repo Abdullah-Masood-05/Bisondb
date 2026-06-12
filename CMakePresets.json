@@ -57,7 +57,8 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_C_COMPILER": "C:/Users/admin/Documents/msys64/mingw64/bin/gcc.exe",
-        "CMAKE_CXX_COMPILER": "C:/Users/admin/Documents/msys64/mingw64/bin/g++.exe"
+        "CMAKE_CXX_COMPILER": "C:/Users/admin/Documents/msys64/mingw64/bin/g++.exe",
+        "CMAKE_EXE_LINKER_FLAGS": "-static"
       }
     },
     {

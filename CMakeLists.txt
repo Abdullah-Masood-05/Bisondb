@@ -20,9 +20,11 @@ else()
     target_compile_options(bisondb_warnings INTERFACE
         -Wall -Wextra -Wpedantic -Werror)
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-        # GCC's -Wmaybe-uninitialized produces well-known false positives in
-        # std::variant/vector move paths at -O2/-O3.
-        target_compile_options(bisondb_warnings INTERFACE -Wno-maybe-uninitialized)
+        # GCC's -Wmaybe-uninitialized and -Wstringop-overread produce
+        # well-known false positives in std::variant/vector/span code at
+        # -O2/-O3 (impossible size bounds derived by range analysis).
+        target_compile_options(bisondb_warnings INTERFACE
+            -Wno-maybe-uninitialized -Wno-stringop-overread)
     endif()
 endif()
 
