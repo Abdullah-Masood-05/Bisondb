@@ -120,6 +120,60 @@ return `truncated: true` with a `skipNext` cursor-substitute that the bundled cl
 follows automatically. Ctrl-C performs a graceful shutdown (drain, sync, exit 0);
 `shutdown` is also available as a command from loopback connections.
 
+## bisonsh — the interactive shell
+
+Terminal 1: `bisond --dir data\db`. Terminal 2:
+
+```text
+> bisonsh
+BisonDB 0.1.0 @ 127.0.0.1:27027
+type 'help' for the statement grammar
+bisondb> db.students.insertMany([{name: 'ada', cgpa: 3.9},
+...                              {name: 'bob', cgpa: 2.1},
+...                              {name: 'eve', cgpa: 3.7},])
+{
+  "insertedCount": 3,
+  "insertedIds": [ {"$oid": "6a2c389484512c46998d9bf4"}, ... ]
+}
+bisondb> db.students.find({cgpa: {$gt: 3.5}})
+{
+  "_id": {"$oid": "6a2c389484512c46998d9bf4"},
+  "name": "ada",
+  "cgpa": 3.9
+}
+{
+  "_id": {"$oid": "6a2c389484512c46998d9bf6"},
+  "name": "eve",
+  "cgpa": 3.7
+}
+returned 2 in 0.3 ms
+bisondb> db.students.find({cgpa: {$gt: 3.5}}).explain()
+{ "plan": "scan", "docsExamined": 3, "docsReturned": 2 }
+scan — examined 3, returned 2
+bisondb> db.students.createIndex('cgpa')
+{ "built": true, "docsIndexed": 3 }
+bisondb> db.students.find({cgpa: {$gt: 3.5}}).explain()
+{ "plan": "index_range", "index": "cgpa", "docsExamined": 2, "docsReturned": 2 }
+index_range on "cgpa" — examined 2, returned 2
+bisondb> exit
+```
+
+JSON arguments are relaxed: unquoted keys (`$gt` included), single-quoted strings, and
+trailing commas. Statements with unbalanced brackets continue on `...` lines (a blank line
+cancels). Output is colorized on TTYs (`--no-color` to disable); long results page after
+100 documents. History persists to `~/.bisonsh_history` (capped at 1000). Parse errors
+show a caret diagnostic and never kill the session:
+
+```text
+bisondb> db.students.find({cgpa: {$gt 3.5}})
+db.students.find({cgpa: {$gt 3.5}})
+                             ^ expected ':' after key '$gt'
+```
+
+Scriptable modes exit non-zero on the first error: `bisonsh --eval "stmt; stmt"`,
+`bisonsh -f script.bsh`, or piped stdin. `--connect host:port` picks the server
+(default `127.0.0.1:27027`).
+
 ## B+Tree internals
 
 ### Files and recovery

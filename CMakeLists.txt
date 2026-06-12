@@ -67,6 +67,20 @@ add_executable(bisond
     src/server/main.cpp
 )
 target_link_libraries(bisond PRIVATE bisondb_server bisondb_warnings)
+
+# ── bisonsh (interactive shell) ───────────────────────────────────────────────
+add_library(bisondb_shell STATIC
+    src/shell/parser.cpp
+    src/shell/printer.cpp
+    src/shell/repl.cpp
+)
+target_link_libraries(bisondb_shell PUBLIC bisondb_core)
+target_link_libraries(bisondb_shell PRIVATE bisondb_warnings)
+
+add_executable(bisonsh
+    src/shell/main.cpp
+)
+target_link_libraries(bisonsh PRIVATE bisondb_shell bisondb_warnings)
 target_include_directories(bisondb_core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
     $<INSTALL_INTERFACE:include>
@@ -97,10 +111,14 @@ add_executable(bisondb_tests
     tests/test_query.cpp
     tests/test_concurrency.cpp
     tests/test_net.cpp
+    tests/test_json_relaxed.cpp
+    tests/test_shell_parser.cpp
+    tests/test_shell_printer.cpp
     tests/integration/test_server.cpp
+    tests/integration/test_shell.cpp
 )
 find_package(Threads REQUIRED)
-target_link_libraries(bisondb_tests PRIVATE Threads::Threads bisondb_server)
+target_link_libraries(bisondb_tests PRIVATE Threads::Threads bisondb_server bisondb_shell)
 target_link_libraries(bisondb_tests PRIVATE bisondb_core bisondb_warnings Catch2::Catch2WithMain)
 target_compile_definitions(bisondb_tests PRIVATE
     BISONDB_TESTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests"
