@@ -1,11 +1,12 @@
 # BisonDB
 
 BisonDB is a document database with a BSON storage engine, inspired by MongoDB. It is written
-in C++20 and targets Windows as its primary development platform, with Linux support planned.
-Phase 1 is complete: `bisondb_core` provides a BSON value model, a hardened BSON
-decoder/encoder, a MongoDB Extended JSON v2 writer (relaxed and canonical modes, including
-decimal128 string rendering), and a strict RFC 8259 JSON parser with Extended JSON folding.
-The `bisonc` CLI converts between BSON and JSON. No storage or networking code exists yet.
+in C++20 and targets Windows as its primary development platform, with Linux support via CI.
+`bisondb_core` provides a BSON value model, a hardened BSON decoder/encoder, MongoDB Extended
+JSON v2 reading/writing, an append-only collection store, a hand-written on-disk B+Tree
+(no `std::map`, no third-party storage libraries), and a query engine with index-aware
+planning. The `bisonc` CLI converts between BSON and JSON and runs queries against database
+directories. No networking code exists yet.
 
 ## Building
 
@@ -63,6 +64,96 @@ bisonc inspect dump.bson
 
 Errors go to stderr with a non-zero exit code. Canonical mode round-trips losslessly:
 `to-json --canonical` followed by `to-bson` reproduces the original file byte for byte.
+
+### Database commands
+
+```bat
+bisonc db import       data\db zips zips.bson
+bisonc db find         data\db zips "{\"pop\": {\"$gte\": 40000}}" --limit 5
+bisonc db find         data\db zips "{\"pop\": {\"$gte\": 40000}}" --explain
+bisonc db create-index data\db zips pop
+bisonc db delete-many  data\db zips "{\"state\": \"AK\"}"
+bisonc db indexes      data\db zips
+bisonc db drop-index   data\db zips pop
+```
+
+`--explain` prints the chosen plan. The same range query before and after `create-index`:
+
+```json
+{ "plan": "scan",        "docsExamined": 29470, "docsReturned": 1015 }
+{ "plan": "index_range", "index": "pop", "docsExamined": 1015, "docsReturned": 1015 }
+```
+
+Filters support `{field: literal}`, `$eq/$ne/$gt/$gte/$lt/$lte/$in`, `$and`/`$or`, and dotted
+paths. The planner uses an index for a single equality or range on an indexed field (and `_id`
+point lookups); everything else falls back to a full scan. Indexed plans always re-check the
+complete filter on each fetched document.
+
+## B+Tree internals
+
+### Files and recovery
+
+A collection lives in `<dbdir>/` as:
+
+| File | Contents |
+|---|---|
+| `<coll>.log` | Append-only record log — **the source of truth** |
+| `<coll>._id.idx` | Unique B+Tree: `encodeKey(_id)` → 8-byte log offset |
+| `<coll>.<field>.idx` | Duplicate-mode B+Tree: `encodeKey(field) ‖ 0x00 ‖ _id` → (empty) |
+| `<coll>.meta.json` | Index registry |
+
+Log records are `u8 type (1=PUT, 2=DEL) | u32 len | payload`. **Recovery rule: the log is the
+source of truth.** Replaying it front to back (last record per `_id` wins) reconstructs the
+live document set; a torn trailing record is ignored. Index files carry a clean flag in their
+header — it is cleared on the first write after open and set again only after a full flush, so
+any crash leaves it unset and the next open discards and rebuilds that index from the log.
+Indexes are disposable caches; the log is never rewritten except by compaction.
+
+### Page layout
+
+Every `.idx` file is an array of fixed-size pages (default 4096 bytes). Page 0 is the header
+(`magic "BSNI", version, pageSize, rootPageId, freeListHead, pageCount, cleanFlag`). Nodes use
+a slotted-page layout:
+
+```
++--------------------------------- page (4096 B) ----------------------------------+
+| type | cnt | freeOff | right |  slot[0] slot[1] ... ->     ...      <- cell  cell |
+| u8   | u16 | u16     | u32   |  u16 offsets, sorted by key | free  | data grows  |
++------ 12-byte header --------+-----------------------------+-------+  upward ----+
+
+leaf cell:     keyLen u16 | key | valLen u16 | value          (right = next-leaf link)
+internal cell: keyLen u16 | key | childPageId u32             (right = rightmost child)
+```
+
+Lookups binary-search the slot array; range scans walk a leaf's cells then follow the
+`right` sibling link. Splits move the upper half of a node to a new page (promoting the
+right page's first key for leaves, the median for internal nodes) and propagate upward,
+growing a new root when needed. Deletion uses lazy underflow: pages may stay underfull, and
+a page is unlinked and freed only when it reaches zero cells (with root collapse). One
+writer or many readers at a time, via a tree-level `shared_mutex`.
+
+### Key encoding
+
+Index keys are encoded so plain `memcmp` matches value order. A type-class tag byte gives the
+cross-type order, then a type-specific payload:
+
+| Class | Tag | Payload encoding |
+|---|---|---|
+| Null | `0x05` | (none) |
+| Numbers (Int32/Int64/Double) | `0x10` | normalized to double; IEEE bits sign-flipped (all bits when negative), big-endian. `-0.0` → `+0.0`. Integers above 2^53 lose precision. NaN is rejected — such documents are skipped by indexes |
+| String | `0x20` | UTF-8 with `0x00` escaped as `0x00 0xFF`, terminated `0x00 0x00` |
+| ObjectId | `0x30` | 12 raw bytes |
+| Bool | `0x40` | 1 byte |
+| DateTime | `0x50` | int64 ms biased by 2^63, big-endian |
+
+Encoded keys cap at 512 bytes; longer keys (and missing fields — a deviation from MongoDB,
+which indexes them as null) are skipped and counted in the index's build stats.
+
+## Sanitizers
+
+`cmake --preset asan` (ASan+UBSan) and `cmake --preset tsan` (ThreadSanitizer, exercises the
+B+Tree reader/writer test) run in CI on Linux/Clang; MinGW on Windows does not ship these
+runtimes.
 
 ## Tests
 

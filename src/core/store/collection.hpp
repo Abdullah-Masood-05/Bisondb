@@ -47,9 +47,8 @@ class CollectionLog {
 
     // Replays the whole log. For every complete record, calls fn(isPut,
     // offset, oid, docBytesOrNull). Stops silently at a torn tail.
-    using ReplayFn =
-        std::function<void(bool isPut, uint64_t offset, const ObjectId& oid,
-                           const std::vector<uint8_t>* docBytes)>;
+    using ReplayFn = std::function<void(bool isPut, uint64_t offset, const ObjectId& oid,
+                                        const std::vector<uint8_t>* docBytes)>;
     void replay(const ReplayFn& fn);
 
     // Phase 2-style startup scan: oid -> offset of the latest PUT, with

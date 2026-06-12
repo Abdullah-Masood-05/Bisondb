@@ -1,7 +1,6 @@
 #include "core/btree/pager.hpp"
 
 #include <catch2/catch_test_macros.hpp>
-
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -61,8 +60,8 @@ TEST_CASE("pager rejects out-of-range page ids", "[pager]") {
     TempFile f("pager_range");
     Pager p(f.str(), 256);
     std::vector<uint8_t> buf(256);
-    REQUIRE_THROWS_AS(p.readPage(0, buf.data()), PagerError);   // header page is internal
-    REQUIRE_THROWS_AS(p.readPage(1, buf.data()), PagerError);   // beyond pageCount
+    REQUIRE_THROWS_AS(p.readPage(0, buf.data()), PagerError); // header page is internal
+    REQUIRE_THROWS_AS(p.readPage(1, buf.data()), PagerError); // beyond pageCount
     REQUIRE_THROWS_AS(p.writePage(5, buf.data()), PagerError);
     PageId a = p.allocPage();
     REQUIRE_NOTHROW(p.writePage(a, buf.data()));
@@ -129,7 +128,10 @@ TEST_CASE("pager rejects foreign files and size mismatches", "[pager]") {
     REQUIRE_THROWS_AS(Pager(f.str(), 256), PagerError);
 
     TempFile g("pager_mismatch");
-    { Pager p(g.str(), 256); p.flushAll(); }
+    {
+        Pager p(g.str(), 256);
+        p.flushAll();
+    }
     REQUIRE_THROWS_AS(Pager(g.str(), 512), PagerError);
 }
 

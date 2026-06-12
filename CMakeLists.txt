@@ -14,6 +14,8 @@ if(MSVC)
     # /Zc:preprocessor: the traditional preprocessor mis-lexes raw string
     # literals inside macro arguments. /utf-8: sources contain UTF-8 literals.
     target_compile_options(bisondb_warnings INTERFACE /W4 /WX /Zc:preprocessor /utf-8)
+    # Portable C stdio (fopen) is used deliberately; silence the fopen_s nags.
+    target_compile_definitions(bisondb_warnings INTERFACE _CRT_SECURE_NO_WARNINGS)
 else()
     target_compile_options(bisondb_warnings INTERFACE
         -Wall -Wextra -Wpedantic -Werror)
@@ -41,6 +43,9 @@ add_library(bisondb_core STATIC
     src/core/btree/pager.cpp
     src/core/btree/key_codec.cpp
     src/core/btree/btree.cpp
+    src/core/store/collection.cpp
+    src/core/query/index_manager.cpp
+    src/core/query/query.cpp
 )
 target_include_directories(bisondb_core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
@@ -68,7 +73,12 @@ add_executable(bisondb_tests
     tests/test_pager.cpp
     tests/test_key_codec.cpp
     tests/test_btree.cpp
+    tests/test_matcher.cpp
+    tests/test_query.cpp
+    tests/test_concurrency.cpp
 )
+find_package(Threads REQUIRED)
+target_link_libraries(bisondb_tests PRIVATE Threads::Threads)
 target_link_libraries(bisondb_tests PRIVATE bisondb_core bisondb_warnings Catch2::Catch2WithMain)
 target_compile_definitions(bisondb_tests PRIVATE
     BISONDB_TESTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests"

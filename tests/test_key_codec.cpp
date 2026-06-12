@@ -1,7 +1,6 @@
 #include "core/btree/key_codec.hpp"
 
 #include <catch2/catch_test_macros.hpp>
-
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -35,7 +34,8 @@ Value randomIndexableValue(std::mt19937& rng) {
         case 1: return Value(-0.0);
         case 2: return Value(std::numeric_limits<double>::infinity() * (rng() % 2 ? 1 : -1));
         case 3: return Value(static_cast<double>(static_cast<int32_t>(rng())) / 7.0);
-        default: return Value(std::ldexp(static_cast<double>(rng()), static_cast<int>(rng() % 64) - 32));
+        default:
+            return Value(std::ldexp(static_cast<double>(rng()), static_cast<int>(rng() % 64) - 32));
         }
     }
     case 4: {
@@ -55,19 +55,20 @@ Value randomIndexableValue(std::mt19937& rng) {
         return Value(oid);
     }
     case 6: return Value(rng() % 2 == 0);
-    default: return Value(DateTime{static_cast<int64_t>((static_cast<uint64_t>(rng()) << 32) ^ rng())});
+    default:
+        return Value(DateTime{static_cast<int64_t>((static_cast<uint64_t>(rng()) << 32) ^ rng())});
     }
 }
 
 } // namespace
 
 TEST_CASE("cross-type ordering follows the tag bytes", "[key_codec]") {
-    std::vector<Value> ordered{Value(),                       // Null
-                               Value(int32_t{5}),             // Number
-                               Value("abc"),                  // String
-                               Value(ObjectId{}),             // ObjectId
-                               Value(false),                  // Bool
-                               Value(DateTime{0})};           // DateTime
+    std::vector<Value> ordered{Value(),             // Null
+                               Value(int32_t{5}),   // Number
+                               Value("abc"),        // String
+                               Value(ObjectId{}),   // ObjectId
+                               Value(false),        // Bool
+                               Value(DateTime{0})}; // DateTime
     for (std::size_t i = 0; i + 1 < ordered.size(); ++i) {
         REQUIRE(memcmpOrder(encodeKey(ordered[i]), encodeKey(ordered[i + 1])) < 0);
         REQUIRE(compareIndexOrder(ordered[i], ordered[i + 1]) == -1);
@@ -80,8 +81,10 @@ TEST_CASE("numeric keys order across int32/int64/double", "[key_codec]") {
     REQUIRE(memcmpOrder(encodeKey(Value(int32_t{3})), encodeKey(Value(3.0))) == 0);
     REQUIRE(memcmpOrder(encodeKey(Value(-0.0)), encodeKey(Value(0.0))) == 0); // -0 normalized
     double inf = std::numeric_limits<double>::infinity();
-    REQUIRE(memcmpOrder(encodeKey(Value(-inf)), encodeKey(Value(std::numeric_limits<double>::lowest()))) < 0);
-    REQUIRE(memcmpOrder(encodeKey(Value(std::numeric_limits<double>::max())), encodeKey(Value(inf))) < 0);
+    REQUIRE(memcmpOrder(encodeKey(Value(-inf)),
+                        encodeKey(Value(std::numeric_limits<double>::lowest()))) < 0);
+    REQUIRE(memcmpOrder(encodeKey(Value(std::numeric_limits<double>::max())),
+                        encodeKey(Value(inf))) < 0);
 }
 
 TEST_CASE("string keys: prefix order and embedded NUL safety", "[key_codec]") {

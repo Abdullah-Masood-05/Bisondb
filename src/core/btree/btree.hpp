@@ -61,9 +61,7 @@ class BTree {
       public:
         bool valid() const noexcept { return valid_; }
         std::span<const uint8_t> key() const noexcept { return {keyBuf_.data(), keyBuf_.size()}; }
-        std::span<const uint8_t> value() const noexcept {
-            return {valBuf_.data(), valBuf_.size()};
-        }
+        std::span<const uint8_t> value() const noexcept { return {valBuf_.data(), valBuf_.size()}; }
         void next();
 
       private:

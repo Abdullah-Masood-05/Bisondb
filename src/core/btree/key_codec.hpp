@@ -43,8 +43,7 @@ std::optional<int> compareIndexOrder(const Value& a, const Value& b);
 // Secondary-index composite key: encoded field value, a 0x00 separator, then
 // the 12 ObjectId bytes — making every stored key unique while preserving
 // (fieldValue, oid) ordering.
-std::vector<uint8_t> composeIndexKey(const std::vector<uint8_t>& encodedField,
-                                     const ObjectId& oid);
+std::vector<uint8_t> composeIndexKey(const std::vector<uint8_t>& encodedField, const ObjectId& oid);
 
 // Recovers the ObjectId from a composite key (the trailing 12 bytes).
 ObjectId oidFromCompositeKey(const std::vector<uint8_t>& key);

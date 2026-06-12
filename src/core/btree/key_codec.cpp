@@ -114,8 +114,8 @@ std::vector<uint8_t> encodeKey(const Value& v) {
         break;
     case Type::DateTime: {
         out.push_back(kTagDateTime);
-        uint64_t biased = static_cast<uint64_t>(v.get<DateTime>().msSinceEpoch) +
-                          0x8000'0000'0000'0000ULL;
+        uint64_t biased =
+            static_cast<uint64_t>(v.get<DateTime>().msSinceEpoch) + 0x8000'0000'0000'0000ULL;
         appendBigEndian64(out, biased);
         break;
     }
@@ -124,8 +124,8 @@ std::vector<uint8_t> encodeKey(const Value& v) {
                               " is not indexable");
     }
     if (out.size() > kMaxEncodedKeyLength) {
-        throw KeyTooLong("encoded key is " + std::to_string(out.size()) +
-                         " bytes (max " + std::to_string(kMaxEncodedKeyLength) + ")");
+        throw KeyTooLong("encoded key is " + std::to_string(out.size()) + " bytes (max " +
+                         std::to_string(kMaxEncodedKeyLength) + ")");
     }
     return out;
 }

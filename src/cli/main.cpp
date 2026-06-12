@@ -3,6 +3,8 @@
 #include "core/json_parser.hpp"
 #include "core/json_writer.hpp"
 #include "core/platform.hpp"
+#include "core/query/index_manager.hpp"
+#include "core/query/query.hpp"
 #include "core/version.hpp"
 
 #include <cstdint>
@@ -33,12 +35,19 @@ void setStdoutBinary() {
 }
 
 int usage(std::ostream& os) {
-    os << "bisonc " << version() << " - BSON/JSON conversion tool\n"
+    os << "bisonc " << version() << " - BSON/JSON conversion and database tool\n"
        << "\n"
        << "Usage:\n"
        << "  bisonc to-json <input.bson> [-o out.json] [--canonical] [--pretty]\n"
        << "  bisonc to-bson <input.json> [-o out.bson]\n"
        << "  bisonc inspect <input.bson>\n"
+       << "\n"
+       << "  bisonc db import       <dbdir> <coll> <file.bson|file.json>\n"
+       << "  bisonc db find         <dbdir> <coll> '<filter-json>' [--limit N] [--explain]\n"
+       << "  bisonc db delete-many  <dbdir> <coll> '<filter-json>'\n"
+       << "  bisonc db create-index <dbdir> <coll> <field>\n"
+       << "  bisonc db drop-index   <dbdir> <coll> <field>\n"
+       << "  bisonc db indexes      <dbdir> <coll>\n"
        << "\n"
        << "to-json reads one or more concatenated BSON documents and writes one JSON\n"
        << "document per line (JSON Lines), or indented documents with --pretty.\n"
@@ -200,6 +209,119 @@ int cmdInspect(std::span<char*> args) {
     return 0;
 }
 
+// ---- bisonc db ---------------------------------------------------------
+
+int cmdDb(std::span<char*> args) {
+    if (args.size() < 3) {
+        throw std::runtime_error("db: expected <verb> <dbdir> <collection> ...");
+    }
+    std::string_view verb = args[0];
+    std::string dbdir = args[1];
+    std::string coll = args[2];
+    std::span<char*> rest = args.subspan(3);
+
+    query::IndexedCollection collection(dbdir, coll);
+    query::QueryEngine engine(collection);
+
+    if (verb == "import") {
+        if (rest.size() != 1) {
+            throw std::runtime_error("db import: expected an input file");
+        }
+        std::string input = rest[0];
+        std::vector<uint8_t> data = readFileBytes(input);
+        std::size_t imported = 0;
+        if (input.size() >= 5 && input.substr(input.size() - 5) == ".json") {
+            std::string_view text(reinterpret_cast<const char*>(data.data()), data.size());
+            while (true) {
+                std::size_t ws = text.find_first_not_of(" \t\r\n");
+                if (ws == std::string_view::npos) {
+                    break;
+                }
+                text.remove_prefix(ws);
+                std::size_t consumed = 0;
+                collection.insert(parseJsonOne(text, consumed));
+                text.remove_prefix(consumed);
+                ++imported;
+            }
+        } else {
+            std::span<const uint8_t> bytes(data);
+            while (!bytes.empty()) {
+                DecodeResult res = decodeOne(bytes);
+                collection.insert(std::move(res.document));
+                bytes = bytes.subspan(res.bytesConsumed);
+                ++imported;
+            }
+        }
+        collection.sync();
+        std::cout << "imported " << imported << " documents\n";
+        return 0;
+    }
+    if (verb == "find") {
+        if (rest.empty()) {
+            throw std::runtime_error("db find: expected a filter");
+        }
+        Value filter = parseJson(rest[0]);
+        query::FindOptions opts;
+        bool explain = false;
+        for (std::size_t i = 1; i < rest.size(); ++i) {
+            std::string_view a = rest[i];
+            if (a == "--limit") {
+                if (i + 1 >= rest.size()) {
+                    throw std::runtime_error("--limit requires a number");
+                }
+                opts.limit = static_cast<std::size_t>(std::stoull(rest[++i]));
+            } else if (a == "--explain") {
+                explain = true;
+            } else {
+                throw std::runtime_error("db find: unknown option " + std::string(a));
+            }
+        }
+        if (explain) {
+            std::cout << toJson(engine.explain(filter, opts).toValue(), JsonMode::Relaxed, true)
+                      << "\n";
+            return 0;
+        }
+        for (const Value& doc : engine.find(filter, opts)) {
+            std::cout << toJson(doc) << "\n";
+        }
+        return 0;
+    }
+    if (verb == "delete-many") {
+        if (rest.size() != 1) {
+            throw std::runtime_error("db delete-many: expected a filter");
+        }
+        std::size_t n = engine.deleteMany(parseJson(rest[0]));
+        collection.sync();
+        std::cout << "deleted " << n << " documents\n";
+        return 0;
+    }
+    if (verb == "create-index") {
+        if (rest.size() != 1) {
+            throw std::runtime_error("db create-index: expected a field name");
+        }
+        query::IndexBuildStats stats = collection.createIndex(rest[0]);
+        collection.sync();
+        std::cout << "indexed " << stats.indexed << " documents (" << stats.skipped
+                  << " skipped)\n";
+        return 0;
+    }
+    if (verb == "drop-index") {
+        if (rest.size() != 1) {
+            throw std::runtime_error("db drop-index: expected a field name");
+        }
+        bool dropped = collection.dropIndex(rest[0]);
+        std::cout << (dropped ? "dropped\n" : "no such index\n");
+        return dropped ? 0 : 2;
+    }
+    if (verb == "indexes") {
+        for (const std::string& field : collection.listIndexes()) {
+            std::cout << field << "\n";
+        }
+        return 0;
+    }
+    throw std::runtime_error("db: unknown verb '" + std::string(verb) + "'");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -217,6 +339,9 @@ int main(int argc, char** argv) {
         }
         if (command == "inspect") {
             return cmdInspect(rest);
+        }
+        if (command == "db") {
+            return cmdDb(rest);
         }
         if (command == "--help" || command == "-h" || command == "help") {
             return usage(std::cout);

@@ -22,7 +22,9 @@ struct InternalEntry {
     PageId child; // subtree with keys < key
 };
 
-Bytes toBytes(std::span<const uint8_t> s) { return Bytes(s.begin(), s.end()); }
+Bytes toBytes(std::span<const uint8_t> s) {
+    return Bytes(s.begin(), s.end());
+}
 
 // Transient in-memory form of a node; mutations parse the page, edit the
 // vector, and re-serialize. Reads never need this — they binary-search the

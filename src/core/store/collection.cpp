@@ -133,8 +133,7 @@ void CollectionLog::replay(const ReplayFn& fn) {
         if (std::fread(header, 1, kRecordHeader, file_) != kRecordHeader) {
             break;
         }
-        uint32_t len = static_cast<uint32_t>(header[1]) |
-                       (static_cast<uint32_t>(header[2]) << 8) |
+        uint32_t len = static_cast<uint32_t>(header[1]) | (static_cast<uint32_t>(header[2]) << 8) |
                        (static_cast<uint32_t>(header[3]) << 16) |
                        (static_cast<uint32_t>(header[4]) << 24);
         if (pos + kRecordHeader + len > end) {
@@ -161,8 +160,7 @@ void CollectionLog::replay(const ReplayFn& fn) {
 
 std::unordered_map<std::string, uint64_t> CollectionLog::buildOffsetMap() {
     std::unordered_map<std::string, uint64_t> map;
-    replay([&map](bool isPut, uint64_t offset, const ObjectId& oid,
-                  const std::vector<uint8_t>*) {
+    replay([&map](bool isPut, uint64_t offset, const ObjectId& oid, const std::vector<uint8_t>*) {
         std::string key(reinterpret_cast<const char*>(oid.bytes.data()), 12);
         if (isPut) {
             map[key] = offset;
@@ -173,7 +171,9 @@ std::unordered_map<std::string, uint64_t> CollectionLog::buildOffsetMap() {
     return map;
 }
 
-void CollectionLog::sync() { fsyncFile(file_); }
+void CollectionLog::sync() {
+    fsyncFile(file_);
+}
 
 uint64_t CollectionLog::sizeBytes() {
     std::fseek(file_, 0, SEEK_END);
@@ -193,14 +193,12 @@ CollectionLog::compact(const std::vector<uint64_t>& liveOffsets) {
         for (uint64_t off : liveOffsets) {
             seekTo(file_, off);
             uint8_t header[kRecordHeader];
-            if (std::fread(header, 1, kRecordHeader, file_) != kRecordHeader ||
-                header[0] != kPut) {
+            if (std::fread(header, 1, kRecordHeader, file_) != kRecordHeader || header[0] != kPut) {
                 throw StoreError("compaction: bad live offset " + std::to_string(off));
             }
-            uint32_t len = static_cast<uint32_t>(header[1]) |
-                           (static_cast<uint32_t>(header[2]) << 8) |
-                           (static_cast<uint32_t>(header[3]) << 16) |
-                           (static_cast<uint32_t>(header[4]) << 24);
+            uint32_t len =
+                static_cast<uint32_t>(header[1]) | (static_cast<uint32_t>(header[2]) << 8) |
+                (static_cast<uint32_t>(header[3]) << 16) | (static_cast<uint32_t>(header[4]) << 24);
             std::vector<uint8_t> payload(len);
             if (std::fread(payload.data(), 1, len, file_) != len) {
                 throw StoreError("compaction: truncated record");
@@ -254,10 +252,9 @@ ObjectId generateObjectId() {
     }();
 
     ObjectId oid;
-    auto secs = static_cast<uint32_t>(
-        std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::system_clock::now().time_since_epoch())
-            .count());
+    auto secs = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(
+                                          std::chrono::system_clock::now().time_since_epoch())
+                                          .count());
     oid.bytes[0] = static_cast<uint8_t>(secs >> 24);
     oid.bytes[1] = static_cast<uint8_t>(secs >> 16);
     oid.bytes[2] = static_cast<uint8_t>(secs >> 8);

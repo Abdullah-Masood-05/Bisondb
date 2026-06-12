@@ -1,7 +1,6 @@
 #include "core/btree/btree.hpp"
 
 #include <catch2/catch_test_macros.hpp>
-
 #include <cstdio>
 #include <filesystem>
 #include <map>
@@ -25,7 +24,9 @@ struct TempFile {
     std::string str() const { return path.string(); }
 };
 
-Bytes bytes(const std::string& s) { return Bytes(s.begin(), s.end()); }
+Bytes bytes(const std::string& s) {
+    return Bytes(s.begin(), s.end());
+}
 
 Bytes numKey(uint32_t n) {
     char buf[16];

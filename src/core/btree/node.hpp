@@ -175,8 +175,7 @@ class Node {
   private:
     void insertSlot(uint16_t i, uint16_t off) {
         uint16_t n = cellCount();
-        std::memmove(buf_ + kHeaderSize + 2u * (i + 1), buf_ + kHeaderSize + 2u * i,
-                     2u * (n - i));
+        std::memmove(buf_ + kHeaderSize + 2u * (i + 1), buf_ + kHeaderSize + 2u * i, 2u * (n - i));
         storeU16(kHeaderSize + 2u * i, off);
         setCellCount(static_cast<uint16_t>(n + 1));
     }
