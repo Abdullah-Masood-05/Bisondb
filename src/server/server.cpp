@@ -19,7 +19,9 @@ std::string timestamp() {
 
 Server::Server(ServerConfig config) : config_(std::move(config)), db_(config_.dir) {}
 
-Server::~Server() { stop(); }
+Server::~Server() {
+    stop();
+}
 
 void Server::log(const std::string& line) {
     if (!config_.quiet) {
@@ -34,8 +36,8 @@ void Server::start() {
         config_.threads != 0 ? config_.threads : std::thread::hardware_concurrency();
     pool_ = std::make_unique<net::ThreadPool>(threads);
     acceptor_ = std::thread([this] { acceptLoop(); });
-    log("info  bisond listening on " + config_.bind + ":" + std::to_string(port_) + " dir=" +
-        config_.dir + " threads=" + std::to_string(threads));
+    log("info  bisond listening on " + config_.bind + ":" + std::to_string(port_) +
+        " dir=" + config_.dir + " threads=" + std::to_string(threads));
 }
 
 void Server::acceptLoop() {
@@ -64,9 +66,8 @@ void Server::acceptLoop() {
         stats_.connectionsCurrent.fetch_add(1);
         // The pool owns the connection for its whole lifetime.
         auto shared = std::make_shared<net::TcpSocket>(std::move(sock));
-        pool_->submit([this, shared, connId]() mutable {
-            serveConnection(std::move(*shared), connId);
-        });
+        pool_->submit(
+            [this, shared, connId]() mutable { serveConnection(std::move(*shared), connId); });
     }
 }
 
@@ -123,8 +124,8 @@ void Server::serveConnection(net::TcpSocket socket, uint64_t connId) {
                 cmd = c->get<std::string>();
             }
         }
-        log("info  conn=" + std::to_string(connId) + " cmd=" + cmd + " durationMs=" +
-            std::to_string(durationMs));
+        log("info  conn=" + std::to_string(connId) + " cmd=" + cmd +
+            " durationMs=" + std::to_string(durationMs));
         try {
             writeFrame(socket, response, config_.maxMessageSize);
         } catch (...) {

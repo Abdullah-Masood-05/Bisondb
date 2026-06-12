@@ -31,9 +31,9 @@ Value okResponse(Document payload = {}) {
 }
 
 Value errorResponse(const std::string& code, const std::string& message) {
-    return Value(Document{
-        {"ok", Value(false)},
-        {"error", Value(Document{{"code", Value(code)}, {"message", Value(message)}})}});
+    return Value(
+        Document{{"ok", Value(false)},
+                 {"error", Value(Document{{"code", Value(code)}, {"message", Value(message)}})}});
 }
 
 // ---- argument validation -------------------------------------------------
@@ -57,8 +57,7 @@ const std::string& requireString(const Document& req, const char* field) {
 const Document& requireDoc(const Document& req, const char* field) {
     const Value& v = require(req, field);
     if (!v.is<Document>()) {
-        throw CommandError("BadRequest",
-                           std::string("field \"") + field + "\" must be a document");
+        throw CommandError("BadRequest", std::string("field \"") + field + "\" must be a document");
     }
     return v.asDocument();
 }
@@ -109,9 +108,8 @@ Value cmdInsert(Server& server, const Document& req) {
         }
         insertedIds.push_back(Value(coll.insert(doc)));
     }
-    return okResponse(Document{
-        {"insertedIds", Value(std::move(insertedIds))},
-        {"insertedCount", Value(static_cast<int64_t>(docs.size()))}});
+    return okResponse(Document{{"insertedIds", Value(std::move(insertedIds))},
+                               {"insertedCount", Value(static_cast<int64_t>(docs.size()))}});
 }
 
 Value cmdFind(Server& server, const Document& req) {
@@ -159,19 +157,17 @@ Value cmdDeleteMany(Server& server, const Document& req) {
 Value cmdUpdateOne(Server& server, const Document& req) {
     query::IndexedCollection& coll = collOf(server, req);
     query::QueryEngine engine(coll);
-    bool matched = engine.updateOne(Value(requireDoc(req, "filter")),
-                                    Value(requireDoc(req, "update")));
-    return okResponse(
-        Document{{"matched", Value(matched)}, {"modified", Value(matched)}});
+    bool matched =
+        engine.updateOne(Value(requireDoc(req, "filter")), Value(requireDoc(req, "update")));
+    return okResponse(Document{{"matched", Value(matched)}, {"modified", Value(matched)}});
 }
 
 Value cmdCreateIndex(Server& server, const Document& req) {
     query::IndexedCollection& coll = collOf(server, req);
     query::IndexBuildStats stats = coll.createIndex(requireString(req, "field"));
-    return okResponse(Document{
-        {"built", Value(true)},
-        {"docsIndexed", Value(static_cast<int64_t>(stats.indexed))},
-        {"docsSkipped", Value(static_cast<int64_t>(stats.skipped))}});
+    return okResponse(Document{{"built", Value(true)},
+                               {"docsIndexed", Value(static_cast<int64_t>(stats.indexed))},
+                               {"docsSkipped", Value(static_cast<int64_t>(stats.skipped))}});
 }
 
 Value cmdExplain(Server& server, const Document& req) {
@@ -194,13 +190,13 @@ Value cmdServerStatus(Server& server, const Document&) {
             counters.append(cmd, Value(static_cast<int64_t>(count)));
         }
     }
-    return okResponse(Document{
-        {"name", Value("BisonDB")},
-        {"version", Value(std::string(version()))},
-        {"uptimeSec", Value(static_cast<int64_t>(uptime))},
-        {"connectionsCurrent",
-         Value(static_cast<int64_t>(server.stats().connectionsCurrent.load()))},
-        {"opCounters", Value(std::move(counters))}});
+    return okResponse(
+        Document{{"name", Value("BisonDB")},
+                 {"version", Value(std::string(version()))},
+                 {"uptimeSec", Value(static_cast<int64_t>(uptime))},
+                 {"connectionsCurrent",
+                  Value(static_cast<int64_t>(server.stats().connectionsCurrent.load()))},
+                 {"opCounters", Value(std::move(counters))}});
 }
 
 // ---- exception -> error code translation (the single place) ---------------

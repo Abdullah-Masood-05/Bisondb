@@ -5,9 +5,8 @@
 #include "core/json_parser.hpp"
 #include "server/server.hpp"
 
-#include <catch2/catch_test_macros.hpp>
-
 #include <atomic>
+#include <catch2/catch_test_macros.hpp>
 #include <filesystem>
 #include <map>
 #include <random>
@@ -230,6 +229,11 @@ TEST_CASE("concurrency soak: 8 clients, mixed ops, oracle-verified", "[integrati
     constexpr int kThreads = 8;
     constexpr int kOpsPerThread = 1000;
 
+    // Index the lookup key so each op is an index range instead of a full
+    // collection scan: keeps the soak fast on slow debug STLs and stresses
+    // concurrent index maintenance at the same time.
+    fx.client().createIndex("soak", "k");
+
     // Each thread owns a disjoint integer key range; the oracle is merged at
     // the end (per-thread determinism, no cross-thread conflicts by design —
     // the server still interleaves them on shared collection structures).
@@ -302,8 +306,7 @@ TEST_CASE("concurrency soak: 8 clients, mixed ops, oracle-verified", "[integrati
 
 TEST_CASE("graceful shutdown leaves clean files", "[integration]") {
     std::random_device rd;
-    fs::path dir =
-        fs::temp_directory_path() / ("bisondb_it_shutdown_" + std::to_string(rd()));
+    fs::path dir = fs::temp_directory_path() / ("bisondb_it_shutdown_" + std::to_string(rd()));
     fs::remove_all(dir);
     {
         server::ServerConfig config;

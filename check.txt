@@ -1,5 +1,0 @@
-{"name": "Abdullah", "cgpa": 3.9}
-{"name": "Qasim", "cgpa": 3.5}
-{"name": "Umar", "cgpa": 4.0}
-{"name": "Faisal", "cgpa": 3.8}
-{"name": "Faisal Ameen", "cgpa": 3.8}

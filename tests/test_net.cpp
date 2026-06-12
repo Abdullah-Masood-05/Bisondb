@@ -1,9 +1,8 @@
 #include "core/net/socket.hpp"
 #include "core/net/thread_pool.hpp"
 
-#include <catch2/catch_test_macros.hpp>
-
 #include <atomic>
+#include <catch2/catch_test_macros.hpp>
 #include <chrono>
 #include <thread>
 #include <vector>
@@ -12,7 +11,9 @@ using namespace bisondb::net;
 
 namespace {
 
-std::vector<uint8_t> bytes(const std::string& s) { return {s.begin(), s.end()}; }
+std::vector<uint8_t> bytes(const std::string& s) {
+    return {s.begin(), s.end()};
+}
 
 } // namespace
 

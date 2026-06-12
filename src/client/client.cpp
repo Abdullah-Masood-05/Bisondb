@@ -41,7 +41,9 @@ Value BisonClient::command(Value request) {
     throw ServerError(code, message);
 }
 
-void BisonClient::ping() { command(Value(Document{{"cmd", Value("ping")}})); }
+void BisonClient::ping() {
+    command(Value(Document{{"cmd", Value("ping")}}));
+}
 
 Value BisonClient::serverStatus() {
     return command(Value(Document{{"cmd", Value("serverStatus")}}));
@@ -148,8 +150,12 @@ Value BisonClient::explain(const std::string& coll, const Value& filter, std::si
     return *resp.asDocument().find("plan");
 }
 
-void BisonClient::compact(const std::string& coll) { command(Value(docArg("compact", coll))); }
+void BisonClient::compact(const std::string& coll) {
+    command(Value(docArg("compact", coll)));
+}
 
-void BisonClient::shutdownServer() { command(Value(Document{{"cmd", Value("shutdown")}})); }
+void BisonClient::shutdownServer() {
+    command(Value(Document{{"cmd", Value("shutdown")}}));
+}
 
 } // namespace bisondb::client

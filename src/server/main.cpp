@@ -26,7 +26,9 @@ BOOL WINAPI consoleHandler(DWORD type) {
     }
     return FALSE;
 }
-void installSignalHandlers() { SetConsoleCtrlHandler(consoleHandler, TRUE); }
+void installSignalHandlers() {
+    SetConsoleCtrlHandler(consoleHandler, TRUE);
+}
 #else
 extern "C" void signalHandler(int) {
     if (g_server != nullptr) {
@@ -40,17 +42,16 @@ void installSignalHandlers() {
 #endif
 
 int usage() {
-    std::cerr
-        << "bisond " << bisondb::version() << " - BisonDB server\n\n"
-        << "Usage: bisond --dir <dbdir> [--port N] [--bind ADDR] [--threads N] [--quiet]\n\n"
-        << "  --dir     database directory (required)\n"
-        << "  --port    TCP port (default 27027)\n"
-        << "  --bind    bind address (default 127.0.0.1)\n"
-        << "  --threads worker threads (default: hardware concurrency)\n"
-        << "  --quiet   suppress per-request logging\n\n"
-        << "WARNING: bisond has NO authentication and NO TLS. It binds to loopback by\n"
-        << "default; binding to any other address exposes the full database to the\n"
-        << "network and is at the operator's own risk.\n";
+    std::cerr << "bisond " << bisondb::version() << " - BisonDB server\n\n"
+              << "Usage: bisond --dir <dbdir> [--port N] [--bind ADDR] [--threads N] [--quiet]\n\n"
+              << "  --dir     database directory (required)\n"
+              << "  --port    TCP port (default 27027)\n"
+              << "  --bind    bind address (default 127.0.0.1)\n"
+              << "  --threads worker threads (default: hardware concurrency)\n"
+              << "  --quiet   suppress per-request logging\n\n"
+              << "WARNING: bisond has NO authentication and NO TLS. It binds to loopback by\n"
+              << "default; binding to any other address exposes the full database to the\n"
+              << "network and is at the operator's own risk.\n";
     return 1;
 }
 

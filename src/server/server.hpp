@@ -21,7 +21,7 @@ namespace bisondb::server {
 struct ServerConfig {
     std::string dir;
     std::string bind = "127.0.0.1";
-    uint16_t port = 27027; // 0 = ephemeral, read back via Server::port()
+    uint16_t port = 27027;   // 0 = ephemeral, read back via Server::port()
     std::size_t threads = 0; // 0 = hardware_concurrency
     std::size_t maxConnections = 64;
     std::size_t maxMessageSize = kMaxMessageSize; // shrinkable for tests

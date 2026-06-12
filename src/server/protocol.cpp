@@ -17,8 +17,8 @@ std::optional<Value> readFrame(net::TcpSocket& socket, std::size_t maxMessageSiz
                    (static_cast<uint32_t>(lenBytes[3]) << 24);
     if (len < kMinMessageSize || len > maxMessageSize) {
         throw FrameError("frame length " + std::to_string(len) + " outside [" +
-                         std::to_string(kMinMessageSize) + ", " +
-                         std::to_string(maxMessageSize) + "]");
+                         std::to_string(kMinMessageSize) + ", " + std::to_string(maxMessageSize) +
+                         "]");
     }
     std::vector<uint8_t> payload(len);
     if (socket.recvExact(payload) == net::RecvStatus::Closed) {
