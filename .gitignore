@@ -1,0 +1,45 @@
+# Build artifacts
+build/
+out/
+.cache/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+_deps/
+
+# Compiled output
+*.exe
+*.dll
+*.lib
+*.a
+*.o
+*.obj
+*.pdb
+*.ilk
+*.exp
+
+# IDE / editor
+.vs/
+.vscode/
+*.user
+*.suo
+*.sln.docstates
+*.ncb
+*.aps
+*.idb
+*.pch
+*.ipch
+*.opensdf
+.idea/
+*.swp
+*.swo
+*~
+
+# clangd / compile_commands
+compile_commands.json
+
+# Windows
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
