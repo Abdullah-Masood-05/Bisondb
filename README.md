@@ -69,7 +69,7 @@ Errors go to stderr with a non-zero exit code. Canonical mode round-trips lossle
 ### Database commands
 
 ```bat
-bisonc db import       data\db zips zips.bson
+bisonc db import       data\db zips tests\fixtures\zips.bson
 bisonc db find         data\db zips "{\"pop\": {\"$gte\": 40000}}" --limit 5
 bisonc db find         data\db zips "{\"pop\": {\"$gte\": 40000}}" --explain
 bisonc db create-index data\db zips pop
@@ -106,7 +106,7 @@ Terminal 2 — talk to it with `bisonc` (any `db` subcommand plus `--connect hos
 
 ```bat
 bisonc ping --connect 127.0.0.1:27027
-bisonc db import - zips zips.bson --connect 127.0.0.1:27027
+bisonc db import - zips tests\fixtures\zips.bson --connect 127.0.0.1:27027
 bisonc db create-index - zips pop --connect 127.0.0.1:27027
 bisonc db find - zips "{\"pop\": {\"$gte\": 100000}}" --explain --connect 127.0.0.1:27027
 bisonc status --connect 127.0.0.1:27027
