@@ -43,6 +43,8 @@ class BisonClient {
     void ping();
     Value serverStatus();
     std::vector<std::string> listCollections();
+    bool createCollection(const std::string& coll); // false when it already exists
+    Value dbStats();
     bool dropCollection(const std::string& coll);
     std::vector<ObjectId> insert(const std::string& coll, const std::vector<Value>& documents);
     // Follows truncated responses (skipNext) unless options.singleBatch.

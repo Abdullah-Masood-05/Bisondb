@@ -6,6 +6,7 @@
 #include "server/server.hpp"
 
 #include <chrono>
+#include <filesystem>
 #include <functional>
 
 namespace bisondb::server {
@@ -253,6 +254,37 @@ Value dispatchCommand(Server& server, const Value& request, const net::TcpSocket
                 names.push_back(Value(n));
             }
             return okResponse(Document{{"collections", Value(std::move(names))}});
+        }
+        if (cmd == "createCollection") {
+            bool created = server.database().createCollection(requireString(req, "coll"));
+            return okResponse(Document{{"created", Value(created)}});
+        }
+        if (cmd == "dbStats") {
+            Array collections;
+            for (const std::string& name : server.database().listCollections()) {
+                query::IndexedCollection& coll = server.database().collection(name);
+                Array indexes;
+                for (const std::string& f : coll.listIndexes()) {
+                    indexes.push_back(Value(f));
+                }
+                namespace fs = std::filesystem;
+                uint64_t bytes = 0;
+                fs::path dir(server.database().dir());
+                std::error_code ec;
+                for (const auto& entry : fs::directory_iterator(dir, ec)) {
+                    std::string file = entry.path().filename().string();
+                    if (file == name + ".log" || file == name + ".meta.json" ||
+                        (entry.path().extension() == ".idx" && file.rfind(name + ".", 0) == 0)) {
+                        bytes += entry.file_size(ec);
+                    }
+                }
+                collections.push_back(Value(Document{
+                    {"name", Value(name)},
+                    {"count", Value(static_cast<int64_t>(coll.count()))},
+                    {"fileSizeBytes", Value(static_cast<int64_t>(bytes))},
+                    {"indexes", Value(std::move(indexes))}}));
+            }
+            return okResponse(Document{{"collections", Value(std::move(collections))}});
         }
         if (cmd == "dropCollection") {
             bool dropped = server.database().dropCollection(requireString(req, "coll"));
