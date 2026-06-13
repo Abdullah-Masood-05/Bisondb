@@ -1,4 +1,17 @@
-# BisonDB
+<div align="center">
+  <img src="assets/logo.png" alt="BisonDB logo" width="120" height="120" />
+  <h1>BisonDB</h1>
+  <p><strong>A document database built from scratch — BSON storage, hand-written B+Trees, and a Compass-style GUI.</strong></p>
+  <p>
+    <a href="https://github.com/Abdullah-Masood-05/Bisondb/actions/workflows/ci.yml"><img src="https://github.com/Abdullah-Masood-05/Bisondb/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPLv3-blue.svg" alt="License: GPLv3" /></a>
+    <img src="https://img.shields.io/badge/C%2B%2B-20-00599C.svg" alt="C++20" />
+  </p>
+  <p>
+    <a href="https://abdullah-masood-05.github.io/bisondb-site/">Documentation</a> ·
+    <a href="https://github.com/Abdullah-Masood-05/Prairie">Prairie GUI</a>
+  </p>
+</div>
 
 BisonDB is a document database with a BSON storage engine, inspired by MongoDB. It is written
 in C++20 and targets Windows as its primary development platform, with Linux support via CI.
