@@ -128,7 +128,7 @@ or open a local database folder (a bundled bisond sidecar is spawned automatical
 browser with filters and explain plans, insert/edit/delete with confirmations, index
 management, and .bson/.json/.jsonl import/export. See `../Prairie/README.md` for build steps.
 
-![Prairie screenshot placeholder](docs/prairie-screenshot.png)
+![BisonDB Prairie — the desktop GUI browsing a collection with the query bar](docs/prairie-screenshot.png)
 
 ## bisonsh — the interactive shell
 
