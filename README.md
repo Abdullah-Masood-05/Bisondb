@@ -136,7 +136,7 @@ Terminal 1: `bisond --dir data\db`. Terminal 2:
 
 ```text
 > bisonsh
-BisonDB 0.1.0 @ 127.0.0.1:27027
+BisonDB 1.0.0 @ 127.0.0.1:27027
 type 'help' for the statement grammar
 bisondb> db.students.insertMany([{name: 'ada', cgpa: 3.9},
 ...                              {name: 'bob', cgpa: 2.1},
@@ -268,3 +268,12 @@ clang-format --dry-run --Werror $(find src tests -name "*.cpp" -o -name "*.hpp")
 ```
 
 CI will fail the lint job if any file is not formatted correctly.
+
+## License
+
+BisonDB (the engine — `bisond`, `bisonsh`, `bisonc`, and the `bisondb_core` library) is
+licensed under the **GNU General Public License v3.0** — see [LICENSE](LICENSE).
+
+The [Prairie](https://github.com/Abdullah-Masood-05/Prairie) desktop GUI is a separate
+project under the MIT license; it communicates with `bisond` over the network protocol (and
+bundles it as a sidecar process), so the two licenses do not conflict.
