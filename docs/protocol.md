@@ -1,7 +1,15 @@
-# BisonDB Wire Protocol (v1)
+# BisonDB Wire Protocol (v2)
 
 BisonDB speaks a minimal framed-BSON protocol over TCP. Default port: **27027**.
-There is **no authentication and no TLS** — run it on loopback or a trusted network only.
+
+> ⚠️ **No TLS yet.** Authentication exists (v2), but the transport is **not encrypted**.
+> Usernames, passwords, tokens, and all data travel in **clear text** over the socket.
+> Run BisonDB on loopback or a trusted LAN only until the TLS phase ships. Anyone who can
+> sniff the connection can read credentials and data.
+
+**Protocol version history.** `serverStatus.protocolVersion` is **2**. v2 added the
+authentication handshake and gates every non-handshake command behind it. A v1 client
+(one that never authenticates) is rejected with `AuthRequired` as soon as any user exists.
 
 ## Framing
 
@@ -38,14 +46,100 @@ Error codes: `BadRequest`, `UnknownCommand`, `ParseError`, `DuplicateKey`, `NotF
 `CorruptData`, `TooLarge`, `Internal`, plus `ServerBusy` when the connection limit is hit
 (sent immediately after accept, then the connection closes).
 
+Authentication adds: `AuthRequired` (not authenticated / setup mode), `AuthFailed` (bad
+credentials or bad/unknown token — **deliberately generic**, so it never reveals whether a
+username exists), `Forbidden` (authenticated but the role lacks the capability), and
+`TokenExpired` (the session token's TTL elapsed — re-authenticate).
+
 Collection names must match `[A-Za-z0-9_][A-Za-z0-9_-]{0,127}`.
+
+## Authentication
+
+Auth is **on by default**. It can be disabled for local development with the server's
+`--no-auth` flag (which refuses to bind to anything but loopback and warns loudly on every
+startup); when disabled, the handshake is skipped and every command is allowed.
+
+### Connection state machine
+
+```
+        ┌──────────────────┐   authenticate / authenticateToken (ok)   ┌────────────────┐
+        │  UNAUTHENTICATED  │ ─────────────────────────────────────────▶│  AUTHENTICATED │
+        │                   │                                           │  (roles bound) │
+        │ allowed: ping,    │ ◀───────────────────────────────────────  │                │
+        │ serverStatus,     │   logout / token expiry / token revoked    └────────────────┘
+        │ authenticate,     │
+        │ authenticateToken │   every other command → AuthRequired
+        └──────────────────┘
+```
+
+- A freshly accepted connection is **UNAUTHENTICATED**. Only `ping`, `serverStatus`,
+  `authenticate`, and `authenticateToken` are allowed. Everything else returns
+  `AuthRequired`. (`serverStatus` in this state returns only identity + the `security`
+  block; no uptime/connection/op counters.)
+- After a successful `authenticate`/`authenticateToken`, the connection is **AUTHENTICATED**
+  with the user's roles. **Every** subsequent command is permission-checked, and the
+  session token is re-validated (expiry + revocation) on each command.
+- `logout`, an expired token (`TokenExpired`), or server-side revocation (the user is
+  dropped, or their password changes) drops the connection back to UNAUTHENTICATED.
+
+### Roles and the capability table
+
+Each command requires one capability; a connection's roles must grant it.
+
+| Capability | `read` | `readWrite` | `admin` |
+|---|:--:|:--:|:--:|
+| read (`find`, `explain`, `listCollections`, `listIndexes`, `dbStats`) | ✅ | ✅ | ✅ |
+| write (`insert`, `updateOne`, `deleteMany`, `createCollection`, `dropCollection`, `createIndex`, `dropIndex`, `compact`) | ❌ | ✅ | ✅ |
+| admin (`createUser`, `dropUser`, `listUsers`, `shutdown`) | ❌ | ❌ | ✅ |
+
+`ping`, `serverStatus`, `logout`, and `changePassword` need no capability (self-service:
+`changePassword` lets any user change *their own* password with the old one; only an admin
+can reset *another* user's). `shutdown` additionally requires a **loopback** peer.
+
+### First-run bootstrap
+
+On first start with an empty user store, the server either:
+
+- **`--init-admin <user>`** — reads the password from the `BISONDB_ADMIN_PASSWORD`
+  environment variable (never a CLI arg, which would leak in process lists) and creates that
+  admin; or
+- **setup mode** — prints a one-time **bootstrap token** to stderr. In setup mode the only
+  accepted privileged command is `createUser` carrying a matching `bootstrapToken` field,
+  which must create an `admin`. Once the first admin exists, setup mode ends and the token
+  is void. There is **no anonymous fallback** once users exist.
+
+The offline tool `bisonc auth create-admin --dir <dbdir> --username <u>` creates an admin
+directly against the data directory with no running server (the recommended seed/recovery
+path).
+
+### Credentials & tokens (how they're stored)
+
+- Passwords are hashed with **Argon2id** (memory-hard) and a per-user random salt; the
+  plaintext is never stored or logged. The hash, salt, and KDF params live in a hidden
+  system file `<dbdir>/__auth.bsd` (never listed by `listCollections`/`dbStats`).
+- A successful `authenticate` issues a **256-bit session token** from the OS CSPRNG. The
+  server stores only a **BLAKE2b-256 hash** of the token (never the raw value). Tokens are
+  in-memory and **session-scoped**: they are lost on server restart (clients re-authenticate).
+- Failed `authenticate` attempts are rate-limited per connection (small increasing delay).
+
+### Auth commands
+
+| Command | Arguments | Success payload |
+|---|---|---|
+| `authenticate` | `username, password` | `token, expiresInSec, username, roles: [string]` |
+| `authenticateToken` | `token` | `username, roles: [string]` |
+| `logout` | — | `{}` (invalidates the session token) |
+| `createUser` | `username, password, roles: [string]` (admin) — or `bootstrapToken, username, password, roles` in setup mode | `{}` (setup-mode form also returns `token, roles` and logs the connection in) |
+| `dropUser` | `username` (admin) | `dropped: bool` |
+| `changePassword` | `newPassword`, `oldPassword?` (self), `username?` (admin reset) | `{}` |
+| `listUsers` | — (admin) | `users: [{ username, roles, disabled }]` |
 
 ## Commands
 
 | Command | Arguments | Success payload |
 |---|---|---|
 | `ping` | — | `{}` |
-| `serverStatus` | — | `name, version, protocolVersion (int32, currently 1), uptimeSec, connectionsCurrent, opCounters{...}` |
+| `serverStatus` | — | `name, version, protocolVersion (int32, currently 2), security: { auth, tls:false, setupMode }`; authenticated callers also get `uptimeSec, connectionsCurrent, opCounters{...}` |
 | `listCollections` | — | `collections: [string]` |
 | `dropCollection` | `coll` | `dropped: bool` |
 | `insert` | `coll, documents: [doc, ...]` | `insertedIds: [ObjectId], insertedCount` |
@@ -61,6 +155,9 @@ Collection names must match `[A-Za-z0-9_][A-Za-z0-9_-]{0,127}`.
 
 Notes:
 
+- All commands in this table require an authenticated connection (see
+  [Authentication](#authentication)) with a role that grants the matching capability;
+  unauthenticated access returns `AuthRequired`, insufficient role returns `Forbidden`.
 - `insert`: documents without `_id` get a server-generated ObjectId; a present `_id`
   must be an ObjectId and unique (`DuplicateKey` otherwise).
 - Filters support `{field: literal}`, `$eq/$ne/$gt/$gte/$lt/$lte/$in`, `$and`/`$or`, and

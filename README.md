@@ -110,15 +110,22 @@ complete filter on each fetched document.
 
 ## bisond server quickstart
 
-> **bisond has NO authentication and NO TLS.** It binds to `127.0.0.1` by default;
-> binding to any other address exposes the full database to the network and is at the
-> operator's own risk.
+> ⚠️ **Authentication is enabled, but there is NO TLS yet.** Credentials and data travel
+> over the socket in **clear text** — use BisonDB only on loopback or a trusted LAN until
+> the TLS phase ships. See [Security](#security) for the auth model. bisond binds to
+> `127.0.0.1` by default; binding elsewhere exposes that clear-text traffic to the network.
 
-Terminal 1 — start the server:
+Terminal 1 — start the server. On first run, seed an admin (password from the environment,
+never a CLI arg):
 
 ```bat
-bisond --dir data\db --port 27027
+set BISONDB_ADMIN_PASSWORD=choose-a-strong-one
+bisond --dir data\db --port 27027 --init-admin admin
 ```
+
+(Omit `--init-admin` and bisond prints a one-time **bootstrap token** instead, used once to
+create the first admin — see [Security](#security). Offline alternative:
+`bisonc auth create-admin --dir data\db --username admin`.)
 
 ![bisond startup banner and structured request log](docs/bisond-banner.png)
 
@@ -266,6 +273,40 @@ cross-type order, then a type-specific payload:
 
 Encoded keys cap at 512 bytes; longer keys (and missing fields — a deviation from MongoDB,
 which indexes them as null) are skipped and counted in the index's build stats.
+
+## Security
+
+> 🔓 **No TLS yet — credentials and data are sent UNENCRYPTED.** Authentication is
+> implemented, but the transport is plain TCP. Anyone able to observe the connection can
+> read passwords, tokens, and documents. **Use only on trusted networks (loopback/LAN)
+> until the TLS phase ships.** TLS is the next planned phase.
+
+**Authentication (wire protocol v2).** Every connection must authenticate before any data
+command; the full handshake, state machine, and error codes are in
+[docs/protocol.md](docs/protocol.md). Highlights:
+
+- **Users & roles.** Three roles: `read` (find/explain/list/dbStats), `readWrite` (all data
+  commands), `admin` (everything + user management + shutdown). Users live in a hidden
+  system file `<dbdir>/__auth.bsd`, never exposed through `listCollections`/`find`.
+- **Password hashing.** **Argon2id** (memory-hard, via the vetted Monocypher library) with a
+  per-user random salt. Plaintext passwords are never stored or logged.
+- **Tokens.** `authenticate` returns a 256-bit session token (OS CSPRNG); the server stores
+  only a **BLAKE2b-256 hash** of it. Tokens are in-memory and expire (default 1h); they are
+  lost on restart. `authenticateToken` resumes a session; `logout` revokes it.
+- **Bootstrap (avoid lockout *and* insecure defaults).** First run with no users either
+  takes `--init-admin <user>` (password from `$BISONDB_ADMIN_PASSWORD`, never a CLI arg) or
+  enters *setup mode*, printing a one-time bootstrap token to stderr that creates exactly
+  one admin. Offline: `bisonc auth create-admin --dir <dbdir> --username <u>`. There is no
+  anonymous fallback once any user exists.
+- **Hardening.** Generic `AuthFailed` (no username enumeration), constant-time secret
+  comparison, per-connection failed-login backoff, `shutdown` requires admin **and** a
+  loopback peer, and auth events are logged without secrets.
+- **Dev escape hatch.** `--no-auth` disables auth entirely; it refuses any non-loopback
+  bind and warns loudly on every startup.
+
+In `bisonsh`, log in with `--username` (you are prompted for the password, or set
+`$BISONDB_PASSWORD`/`--token`/`$BISONDB_TOKEN`), then manage accounts with `auth login`,
+`auth whoami`, `auth passwd`, `auth create-user`, `auth list-users`, and `auth bootstrap`.
 
 ## Sanitizers
 
