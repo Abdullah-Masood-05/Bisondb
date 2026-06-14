@@ -29,12 +29,11 @@ class FrameError : public Error {
 // clean close between frames. Throws FrameError for length violations and
 // BsonParseError for a well-framed but malformed payload (the stream stays
 // in sync, so the connection can keep serving after an error response).
-std::optional<Value> readFrame(net::TcpSocket& socket,
-                               std::size_t maxMessageSize = kMaxMessageSize);
+std::optional<Value> readFrame(net::Stream& socket, std::size_t maxMessageSize = kMaxMessageSize);
 
 // Encodes and writes one frame; throws FrameError when the encoded document
 // exceeds maxMessageSize.
-void writeFrame(net::TcpSocket& socket, const Value& document,
+void writeFrame(net::Stream& socket, const Value& document,
                 std::size_t maxMessageSize = kMaxMessageSize);
 
 } // namespace bisondb::server

@@ -241,7 +241,7 @@ Value cmdExplain(Server& server, const Document& req) {
 // posture. Authenticated callers additionally get uptime/connections/op stats.
 Value cmdServerStatus(Server& server, const ConnectionAuth& conn) {
     Document security{{"auth", Value(server.authActive())},
-                      {"tls", Value(false)}, // NO TLS yet — credentials are clear text
+                      {"tls", Value(server.tlsEnabled())},
                       {"setupMode", Value(server.inSetupMode())}};
 
     Document d{{"name", Value("BisonDB")},
@@ -473,7 +473,7 @@ Value translateActiveException(const std::string& cmd) {
 
 } // namespace
 
-Value dispatchCommand(Server& server, const Value& request, const net::TcpSocket& peer,
+Value dispatchCommand(Server& server, const Value& request, const net::Stream& peer,
                       ConnectionAuth& conn) {
     std::string cmd;
     try {

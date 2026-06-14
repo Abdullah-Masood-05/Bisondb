@@ -81,6 +81,34 @@ class TcpSocket {
     NativeSocket handle_ = kInvalidSocket;
 };
 
+// Abstract byte stream with TcpSocket's sendAll/recvExact contract. The framing
+// layer and the server/client operate on a Stream& so a connection can be plain
+// TCP (TcpStream) or TLS (net::TlsStream) without changing the code above it.
+class Stream {
+  public:
+    virtual ~Stream() = default;
+    virtual void sendAll(std::span<const uint8_t> data) = 0;
+    virtual RecvStatus recvExact(std::span<uint8_t> buf) = 0;
+    virtual void setRecvTimeout(int milliseconds) = 0;
+    virtual void shutdownBoth() noexcept = 0;
+    virtual bool isLoopbackPeer() const = 0;
+};
+
+// Plaintext Stream: a thin adapter owning a TcpSocket.
+class TcpStream final : public Stream {
+  public:
+    explicit TcpStream(TcpSocket sock) : sock_(std::move(sock)) {}
+    void sendAll(std::span<const uint8_t> data) override { sock_.sendAll(data); }
+    RecvStatus recvExact(std::span<uint8_t> buf) override { return sock_.recvExact(buf); }
+    void setRecvTimeout(int ms) override { sock_.setRecvTimeout(ms); }
+    void shutdownBoth() noexcept override { sock_.shutdownBoth(); }
+    bool isLoopbackPeer() const override { return sock_.isLoopbackPeer(); }
+    TcpSocket& socket() noexcept { return sock_; }
+
+  private:
+    TcpSocket sock_;
+};
+
 // Listening socket. IPv4 today; the address parameter keeps the API ready
 // for IPv6. SO_REUSEADDR is set on POSIX only: there it merely allows reuse
 // of a TIME_WAIT port, while on Windows it permits hijacking a port another

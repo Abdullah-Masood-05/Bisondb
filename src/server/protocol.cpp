@@ -7,7 +7,7 @@
 
 namespace bisondb::server {
 
-std::optional<Value> readFrame(net::TcpSocket& socket, std::size_t maxMessageSize) {
+std::optional<Value> readFrame(net::Stream& socket, std::size_t maxMessageSize) {
     uint8_t lenBytes[4];
     if (socket.recvExact(lenBytes) == net::RecvStatus::Closed) {
         return std::nullopt;
@@ -27,7 +27,7 @@ std::optional<Value> readFrame(net::TcpSocket& socket, std::size_t maxMessageSiz
     return decodeDocument(payload);
 }
 
-void writeFrame(net::TcpSocket& socket, const Value& document, std::size_t maxMessageSize) {
+void writeFrame(net::Stream& socket, const Value& document, std::size_t maxMessageSize) {
     std::vector<uint8_t> payload = encodeDocument(document);
     if (payload.size() > maxMessageSize) {
         throw FrameError("response of " + std::to_string(payload.size()) +

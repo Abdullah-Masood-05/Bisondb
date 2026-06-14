@@ -2,9 +2,11 @@
 
 #include "core/error.hpp"
 #include "core/net/socket.hpp"
+#include "core/net/tls.hpp"
 #include "core/value.hpp"
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -50,6 +52,18 @@ struct UserInfo {
     bool disabled = false;
 };
 
+// TLS options for connecting. When `enabled`, the TCP connection is wrapped in
+// a TLS session before the auth handshake. Verification is secure by default
+// (System trust + hostname); CaFile/Pin are the self-signed paths; Insecure
+// skips verification and the caller must warn.
+struct TlsOptions {
+    bool enabled = false;
+    net::TlsVerify verify = net::TlsVerify::System;
+    std::string caFile;    // for CaFile
+    std::string pinSha256; // for Pin
+    std::string hostname;  // SNI + verification target; defaults to host
+};
+
 struct FindOptions {
     std::size_t limit = 0;
     std::size_t skip = 0;
@@ -68,6 +82,14 @@ class BisonClient {
     // Connect and authenticate in one step. Throws AuthError on bad creds.
     static BisonClient connect(const std::string& host, uint16_t port, const Credentials& creds,
                                int timeoutMs = 5000);
+
+    // TLS variants. The TCP connection is wrapped in TLS (verified per `tls`)
+    // before any frame is sent; net::TlsError is thrown on handshake/verify
+    // failure (with a hint when the server looks like plaintext).
+    static BisonClient connect(const std::string& host, uint16_t port, const TlsOptions& tls,
+                               int timeoutMs = 5000);
+    static BisonClient connect(const std::string& host, uint16_t port, const TlsOptions& tls,
+                               const Credentials& creds, int timeoutMs = 5000);
 
     // Sends one request document and returns the (ok:true) response payload.
     // If the session token has expired and password credentials are known,
@@ -104,6 +126,10 @@ class BisonClient {
     const std::vector<std::string>& currentRoles() const noexcept { return roles_; }
     const std::string& sessionToken() const noexcept { return token_; }
 
+    // Connection transport info (for the shell's lock indicator).
+    bool isTls() const noexcept { return tls_; }
+    bool tlsVerified() const noexcept { return tlsVerified_; }
+
     void ping();
     Value serverStatus();
     std::vector<std::string> listCollections();
@@ -124,13 +150,19 @@ class BisonClient {
     void shutdownServer();
 
   private:
-    explicit BisonClient(net::TcpSocket socket) : socket_(std::move(socket)) {}
+    explicit BisonClient(std::unique_ptr<net::Stream> stream) : stream_(std::move(stream)) {}
+
+    // TCP connect + optional TLS handshake; returns a client with stream_ set.
+    static BisonClient establish(const std::string& host, uint16_t port, const TlsOptions& tls,
+                                 int timeoutMs);
 
     // One request/response exchange with no auto-reauth (used by the auth
     // handshake itself, and by command() internally).
     Value sendOnce(const Value& request);
 
-    net::TcpSocket socket_;
+    std::unique_ptr<net::Stream> stream_;
+    bool tls_ = false;
+    bool tlsVerified_ = false;
 
     // Session state for transparent re-auth and connection info.
     bool authenticated_ = false;

@@ -493,8 +493,12 @@ CertKeyPem generateSelfSigned(const std::string& cn, int days) {
 
     using namespace std::chrono;
     std::time_t now = system_clock::to_time_t(system_clock::now());
-    std::string notBefore = fmtUtc(now - 24 * 3600);                                 // -1 day skew
-    std::string notAfter = fmtUtc(now + static_cast<std::time_t>(days) * 24 * 3600); // +days
+    std::time_t notAfterT = now + static_cast<std::time_t>(days) * 24 * 3600;
+    // Normal certs start 1 day ago (clock skew). For days<0 (an already-expired
+    // cert, used in tests) keep notBefore < notAfter so the only defect is age.
+    std::time_t notBeforeT = days >= 0 ? now - 24 * 3600 : notAfterT - 24 * 3600;
+    std::string notBefore = fmtUtc(notBeforeT);
+    std::string notAfter = fmtUtc(notAfterT);
 
     std::string subject = "CN=" + cn;
     mbedtls_x509write_crt_set_subject_key(&crt, &key);

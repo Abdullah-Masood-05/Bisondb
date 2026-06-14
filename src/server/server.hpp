@@ -5,6 +5,7 @@
 #include "core/crypto/crypto.hpp"
 #include "core/net/socket.hpp"
 #include "core/net/thread_pool.hpp"
+#include "core/net/tls.hpp"
 #include "core/query/database.hpp"
 #include "server/auth_session.hpp"
 #include "server/protocol.hpp"
@@ -40,6 +41,13 @@ struct ServerConfig {
     std::int64_t tokenTtlSeconds = 3600; // session token lifetime
     bool throttleAuth = true;            // real sleep on failed-auth backoff (tests disable)
     crypto::KdfParams kdf{};             // Argon2id cost; tests lower it for speed
+
+    // ── TLS (transport encryption) ────────────────────────────────────────
+    bool tls = false;                  // --tls: wrap the listener in TLS
+    std::string tlsCertFile;           // --tls-cert <pem>
+    std::string tlsKeyFile;            // --tls-key <pem>
+    bool tlsSelfSigned = false;        // --tls-self-signed: generate at startup
+    int tlsHandshakeTimeoutMs = 10000; // bound a slow/stalled TLS handshake
 };
 
 struct ServerStats {
@@ -88,6 +96,8 @@ class Server {
     // ── Auth surface used by the command dispatcher ───────────────────────
     // True when auth enforcement is in effect (i.e. not --no-auth).
     bool authActive() const noexcept { return !config_.noAuth; }
+    // True when the listener is wrapped in TLS.
+    bool tlsEnabled() const noexcept { return config_.tls; }
     // True until the first admin is created (no users on disk, no --init-admin).
     bool inSetupMode() const noexcept { return setupMode_.load(); }
     auth::UserStore& users() noexcept { return *users_; }
@@ -112,6 +122,7 @@ class Server {
     void serveConnection(net::TcpSocket socket, uint64_t connId);
     void log(const std::string& line);
     void initAuth(); // construct user store + run first-run bootstrap
+    void initTls();  // build the TLS context (cert/key or self-signed)
 
     ServerConfig config_;
     query::Database db_;
@@ -128,8 +139,10 @@ class Server {
 
     // Live connections, for the forced-close pass during shutdown.
     std::mutex connMutex_;
-    std::unordered_map<uint64_t, net::TcpSocket*> connections_;
+    std::unordered_map<uint64_t, net::Stream*> connections_;
     std::atomic<uint64_t> nextConnId_{1};
+
+    std::shared_ptr<net::TlsContext> tlsContext_; // null unless --tls
 
     // Auth state. users_ is null only in --no-auth mode.
     std::unique_ptr<auth::UserStore> users_;
@@ -143,7 +156,7 @@ class Server {
 // throws — every engine exception is translated to an { ok:false, error }
 // response in one place. `conn` carries the per-connection auth state and is
 // mutated by the auth handshake commands.
-Value dispatchCommand(Server& server, const Value& request, const net::TcpSocket& peer,
+Value dispatchCommand(Server& server, const Value& request, const net::Stream& peer,
                       ConnectionAuth& conn);
 
 } // namespace bisondb::server

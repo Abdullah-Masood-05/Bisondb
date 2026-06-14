@@ -164,6 +164,7 @@ add_executable(bisondb_tests
     tests/test_shell_printer.cpp
     tests/integration/test_server.cpp
     tests/integration/test_auth_server.cpp
+    tests/integration/test_tls_server.cpp
     tests/integration/test_shell.cpp
 )
 find_package(Threads REQUIRED)

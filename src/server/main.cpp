@@ -54,13 +54,17 @@ int usage() {
               << "  --quiet       suppress per-request logging\n"
               << "  --init-admin  on first run, create this admin from $BISONDB_ADMIN_PASSWORD\n"
               << "  --no-auth     DANGER: disable authentication entirely (loopback only)\n"
-              << "  --token-ttl   session-token lifetime in seconds (default 3600)\n\n"
+              << "  --token-ttl   session-token lifetime in seconds (default 3600)\n"
+              << "  --tls         encrypt the transport (TLS 1.2); needs a cert/key\n"
+              << "  --tls-cert    PEM certificate (chain) file\n"
+              << "  --tls-key     PEM private key file\n"
+              << "  --tls-self-signed  generate an in-memory self-signed cert at startup\n"
+              << "                     and print its SHA-256 fingerprint for client pinning\n\n"
               << "Authentication is ENABLED by default. On first run with no users, bisond\n"
               << "prints a one-time bootstrap token to create the first admin.\n\n"
-              << "WARNING: the transport is NOT encrypted yet (no TLS). Credentials and data\n"
-              << "travel in CLEAR TEXT over the socket. Use only on trusted networks until\n"
-              << "TLS ships. Binding to a non-loopback address exposes that clear-text\n"
-              << "traffic to the network.\n";
+              << "Use `bisonc tls gen-cert` to make a cert/key pair, then run with --tls.\n"
+              << "Without --tls the transport is UNENCRYPTED: credentials and data travel in\n"
+              << "clear text. Use --tls (or a trusted network) — especially off loopback.\n";
     return 1;
 }
 
@@ -93,6 +97,15 @@ int main(int argc, char** argv) {
             config.noAuth = true;
         } else if (arg == "--token-ttl") {
             config.tokenTtlSeconds = static_cast<std::int64_t>(std::stoll(next()));
+        } else if (arg == "--tls") {
+            config.tls = true;
+        } else if (arg == "--tls-cert") {
+            config.tlsCertFile = next();
+        } else if (arg == "--tls-key") {
+            config.tlsKeyFile = next();
+        } else if (arg == "--tls-self-signed") {
+            config.tls = true;
+            config.tlsSelfSigned = true;
         } else if (arg == "--help" || arg == "-h") {
             usage();
             return 0;
@@ -105,10 +118,10 @@ int main(int argc, char** argv) {
         std::cerr << "bisond: --dir is required\n";
         return usage();
     }
-    if (config.bind != "127.0.0.1" && !config.quiet) {
+    if (config.bind != "127.0.0.1" && !config.tls && !config.quiet) {
         std::cerr << "WARNING: binding to " << config.bind
-                  << " — the transport is unencrypted (no TLS yet), so credentials and\n"
-                     "data are exposed in clear text to the network.\n";
+                  << " WITHOUT --tls — credentials and data are exposed in clear text to\n"
+                     "the network. Add --tls (see `bisonc tls gen-cert`).\n";
     }
 
     if (!config.quiet) {

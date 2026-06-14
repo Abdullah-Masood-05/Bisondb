@@ -22,6 +22,7 @@ std::string timestamp() {
 
 Server::Server(ServerConfig config) : config_(std::move(config)), db_(config_.dir) {
     initAuth();
+    initTls();
 }
 
 Server::~Server() {
@@ -80,6 +81,31 @@ void Server::initAuth() {
               << "============================================================\n\n";
 }
 
+void Server::initTls() {
+    if (!config_.tls) {
+        return;
+    }
+    if (config_.tlsSelfSigned && config_.tlsCertFile.empty()) {
+        net::CertKeyPem ck = net::generateSelfSigned("localhost", 365);
+        tlsContext_ = net::TlsContext::serverFromPem(ck.certPem, ck.keyPem);
+        // Printed to stderr (even under --quiet) so a client can pin it; the
+        // private key itself is NEVER logged.
+        std::cerr << "\n=============== BisonDB TLS (self-signed) ===============\n"
+                  << "Generated an in-memory self-signed certificate (CN=localhost).\n"
+                  << "It is NOT trusted by any CA — pin it on the client with:\n\n"
+                  << "    --tls-pin " << net::certFingerprintSha256(ck.certPem) << "\n\n"
+                  << "For anything beyond local dev, use a real cert via --tls-cert/--tls-key\n"
+                  << "(see: bisonc tls gen-cert).\n"
+                  << "=========================================================\n\n";
+    } else {
+        if (config_.tlsCertFile.empty() || config_.tlsKeyFile.empty()) {
+            throw std::runtime_error(
+                "--tls requires --tls-cert and --tls-key (or --tls-self-signed)");
+        }
+        tlsContext_ = net::TlsContext::serverFromFiles(config_.tlsCertFile, config_.tlsKeyFile);
+    }
+}
+
 bool Server::checkBootstrapToken(const std::string& presented) const {
     std::lock_guard lock(bootstrapMutex_);
     if (!setupMode_.load() || bootstrapToken_.empty()) {
@@ -133,15 +159,21 @@ void Server::acceptLoop() {
             break;
         }
         if (stats_.connectionsCurrent.load() >= config_.maxConnections) {
-            try {
-                Value busy(Document{
-                    {"ok", Value(false)},
-                    {"error", Value(Document{{"code", Value("ServerBusy")},
-                                             {"message", Value("connection limit reached")}})}});
-                writeFrame(sock, busy, config_.maxMessageSize);
-            } catch (...) {
+            // Best-effort rejection. Skip it for TLS: the peer is still mid-
+            // handshake and couldn't read a plaintext frame anyway.
+            if (!tlsEnabled()) {
+                try {
+                    net::TcpStream rejected(std::move(sock));
+                    Value busy(Document{
+                        {"ok", Value(false)},
+                        {"error",
+                         Value(Document{{"code", Value("ServerBusy")},
+                                        {"message", Value("connection limit reached")}})}});
+                    writeFrame(rejected, busy, config_.maxMessageSize);
+                } catch (...) {
+                }
             }
-            continue; // socket closes via RAII
+            continue; // socket (or the temp stream) closes via RAII
         }
         uint64_t connId = nextConnId_.fetch_add(1);
         stats_.connectionsCurrent.fetch_add(1);
@@ -153,11 +185,30 @@ void Server::acceptLoop() {
 }
 
 void Server::serveConnection(net::TcpSocket socket, uint64_t connId) {
+    // Build the byte stream. For TLS, run the handshake HERE (in the worker
+    // thread, not the acceptor) so a slow/malicious handshake can't stall
+    // accepting; a recv timeout bounds it.
+    std::unique_ptr<net::Stream> stream;
+    if (tlsEnabled()) {
+        socket.setRecvTimeout(config_.tlsHandshakeTimeoutMs);
+        try {
+            stream = std::make_unique<net::TlsStream>(
+                net::TlsStream::accept(tlsContext_, std::move(socket)));
+        } catch (const net::TlsError& e) {
+            log("debug conn=" + std::to_string(connId) + " TLS handshake failed: " + e.what());
+            stats_.connectionsCurrent.fetch_sub(1);
+            return; // socket closed via RAII
+        }
+        stream->setRecvTimeout(0); // blocking again for normal request handling
+    } else {
+        stream = std::make_unique<net::TcpStream>(std::move(socket));
+    }
+
     {
         std::lock_guard lock(connMutex_);
-        connections_[connId] = &socket;
+        connections_[connId] = stream.get();
     }
-    log("info  conn=" + std::to_string(connId) + " accepted");
+    log("info  conn=" + std::to_string(connId) + (tlsEnabled() ? " accepted (TLS)" : " accepted"));
 
     // Per-connection auth state; lives for the whole connection lifetime.
     ConnectionAuth conn;
@@ -166,7 +217,7 @@ void Server::serveConnection(net::TcpSocket socket, uint64_t connId) {
     while (!stopRequested_.load()) {
         std::optional<Value> request;
         try {
-            request = readFrame(socket, config_.maxMessageSize);
+            request = readFrame(*stream, config_.maxMessageSize);
         } catch (const FrameError& e) {
             // Byte stream out of sync: best-effort error frame, then close.
             try {
@@ -174,7 +225,7 @@ void Server::serveConnection(net::TcpSocket socket, uint64_t connId) {
                     {"ok", Value(false)},
                     {"error", Value(Document{{"code", Value("TooLarge")},
                                              {"message", Value(std::string(e.what()))}})}});
-                writeFrame(socket, err, config_.maxMessageSize);
+                writeFrame(*stream, err, config_.maxMessageSize);
             } catch (...) {
             }
             break;
@@ -185,7 +236,7 @@ void Server::serveConnection(net::TcpSocket socket, uint64_t connId) {
                     {"ok", Value(false)},
                     {"error", Value(Document{{"code", Value("ParseError")},
                                              {"message", Value(std::string(e.what()))}})}});
-                writeFrame(socket, err, config_.maxMessageSize);
+                writeFrame(*stream, err, config_.maxMessageSize);
                 continue;
             } catch (...) {
                 break;
@@ -198,7 +249,7 @@ void Server::serveConnection(net::TcpSocket socket, uint64_t connId) {
         }
 
         auto begun = std::chrono::steady_clock::now();
-        Value response = dispatchCommand(*this, *request, socket, conn);
+        Value response = dispatchCommand(*this, *request, *stream, conn);
         auto durationMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                               std::chrono::steady_clock::now() - begun)
                               .count();
@@ -211,7 +262,7 @@ void Server::serveConnection(net::TcpSocket socket, uint64_t connId) {
         log("info  conn=" + std::to_string(connId) + " cmd=" + cmd +
             " durationMs=" + std::to_string(durationMs));
         try {
-            writeFrame(socket, response, config_.maxMessageSize);
+            writeFrame(*stream, response, config_.maxMessageSize);
         } catch (...) {
             break;
         }

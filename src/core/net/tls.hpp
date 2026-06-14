@@ -82,8 +82,9 @@ class TlsContext {
 
 class TlsStreamImpl; // opaque
 
-// A TLS session over an owned TcpSocket. Move-only, like TcpSocket.
-class TlsStream {
+// A TLS session over an owned TcpSocket. Move-only, like TcpSocket. Implements
+// the net::Stream interface so it drops into the framing/server/client code.
+class TlsStream final : public Stream {
   public:
     // Wrap an accepted socket and run the server handshake (blocking; honors
     // the socket's recv timeout so a stalled peer is bounded). Throws TlsError.
@@ -92,18 +93,18 @@ class TlsStream {
     // context's policy. Throws TlsError (Verification on a trust failure).
     static TlsStream connect(std::shared_ptr<TlsContext> ctx, TcpSocket sock);
 
-    ~TlsStream();
+    ~TlsStream() override;
     TlsStream(TlsStream&&) noexcept;
     TlsStream& operator=(TlsStream&&) noexcept;
     TlsStream(const TlsStream&) = delete;
     TlsStream& operator=(const TlsStream&) = delete;
 
-    // Same contract as TcpSocket's equivalents.
-    void sendAll(std::span<const uint8_t> data);
-    RecvStatus recvExact(std::span<uint8_t> buf);
-    void setRecvTimeout(int milliseconds);
-    void shutdownBoth() noexcept;
-    bool isLoopbackPeer() const;
+    // Same contract as TcpSocket's equivalents (net::Stream interface).
+    void sendAll(std::span<const uint8_t> data) override;
+    RecvStatus recvExact(std::span<uint8_t> buf) override;
+    void setRecvTimeout(int milliseconds) override;
+    void shutdownBoth() noexcept override;
+    bool isLoopbackPeer() const override;
 
     // SHA-256 of the peer's certificate (lowercase hex), for pin display/logs.
     std::string peerFingerprint() const;

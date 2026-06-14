@@ -29,14 +29,52 @@ std::vector<std::string> parseRoles(const Document& payload) {
 
 } // namespace
 
-BisonClient BisonClient::connect(const std::string& host, uint16_t port, int timeoutMs) {
+BisonClient BisonClient::establish(const std::string& host, uint16_t port, const TlsOptions& tls,
+                                   int timeoutMs) {
     net::TcpSocket socket = net::connectTcp(host, port, timeoutMs);
-    return BisonClient(std::move(socket));
+    if (!tls.enabled) {
+        return BisonClient(std::make_unique<net::TcpStream>(std::move(socket)));
+    }
+    net::TlsClientOptions o;
+    o.verify = tls.verify;
+    o.caFile = tls.caFile;
+    o.pinSha256Hex = tls.pinSha256;
+    o.hostname = tls.hostname.empty() ? host : tls.hostname;
+    auto ctx = net::TlsContext::client(o);
+    try {
+        BisonClient c(
+            std::make_unique<net::TlsStream>(net::TlsStream::connect(ctx, std::move(socket))));
+        c.tls_ = true;
+        c.tlsVerified_ = (tls.verify != net::TlsVerify::Insecure);
+        return c;
+    } catch (const net::TlsError& e) {
+        // A plaintext server looks like a broken handshake — guide the user.
+        if (e.kind() == net::TlsError::Kind::Handshake) {
+            throw net::TlsError(e.kind(), std::string(e.what()) +
+                                              " — is the server actually using TLS? If it is "
+                                              "plaintext, connect without --tls.");
+        }
+        throw;
+    }
+}
+
+BisonClient BisonClient::connect(const std::string& host, uint16_t port, int timeoutMs) {
+    return establish(host, port, TlsOptions{}, timeoutMs);
+}
+
+BisonClient BisonClient::connect(const std::string& host, uint16_t port, const TlsOptions& tls,
+                                 int timeoutMs) {
+    return establish(host, port, tls, timeoutMs);
 }
 
 BisonClient BisonClient::connect(const std::string& host, uint16_t port, const Credentials& creds,
                                  int timeoutMs) {
-    BisonClient c = connect(host, port, timeoutMs);
+    return connect(host, port, TlsOptions{}, creds, timeoutMs);
+}
+
+BisonClient BisonClient::connect(const std::string& host, uint16_t port, const TlsOptions& tls,
+                                 const Credentials& creds, int timeoutMs) {
+    BisonClient c = establish(host, port, tls, timeoutMs);
     if (creds.usesToken()) {
         c.authenticateToken(creds.token);
     } else {
@@ -46,8 +84,8 @@ BisonClient BisonClient::connect(const std::string& host, uint16_t port, const C
 }
 
 Value BisonClient::sendOnce(const Value& request) {
-    server::writeFrame(socket_, request);
-    std::optional<Value> response = server::readFrame(socket_);
+    server::writeFrame(*stream_, request);
+    std::optional<Value> response = server::readFrame(*stream_);
     if (!response.has_value()) {
         throw net::NetError(net::NetError::Kind::Closed, "server closed the connection");
     }
