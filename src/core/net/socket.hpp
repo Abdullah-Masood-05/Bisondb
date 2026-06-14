@@ -60,6 +60,15 @@ class TcpSocket {
     // timeouts, mid-message closes, and OS errors.
     RecvStatus recvExact(std::span<uint8_t> buf);
 
+    // Low-level single send/recv for layering a protocol on top of TCP (the
+    // TLS BIO callbacks). Non-throwing. Returns the byte count (>0), 0 on an
+    // orderly peer close, or a negative sentinel: kRawError on a fatal error,
+    // kRawTimeout on a recv timeout / would-block.
+    static constexpr int kRawError = -1;
+    static constexpr int kRawTimeout = -2;
+    int sendRaw(const uint8_t* buf, std::size_t len) noexcept;
+    int recvRaw(uint8_t* buf, std::size_t len) noexcept;
+
     // 0 disables the timeout (blocking reads).
     void setRecvTimeout(int milliseconds);
     void setNoDelay(bool on);

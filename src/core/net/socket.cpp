@@ -203,6 +203,28 @@ RecvStatus TcpSocket::recvExact(std::span<uint8_t> buf) {
     return RecvStatus::Complete;
 }
 
+int TcpSocket::sendRaw(const uint8_t* buf, std::size_t len) noexcept {
+    auto n = send(osSock(handle_), reinterpret_cast<const char*>(buf), static_cast<int>(len), 0);
+    if (n > 0) {
+        return static_cast<int>(n);
+    }
+    if (n == 0) {
+        return 0;
+    }
+    return errIsTimeout(lastError()) ? kRawTimeout : kRawError;
+}
+
+int TcpSocket::recvRaw(uint8_t* buf, std::size_t len) noexcept {
+    auto n = recv(osSock(handle_), reinterpret_cast<char*>(buf), static_cast<int>(len), 0);
+    if (n > 0) {
+        return static_cast<int>(n);
+    }
+    if (n == 0) {
+        return 0;
+    }
+    return errIsTimeout(lastError()) ? kRawTimeout : kRawError;
+}
+
 void TcpSocket::setRecvTimeout(int milliseconds) {
 #if defined(BISONDB_PLATFORM_WINDOWS)
     DWORD value = static_cast<DWORD>(milliseconds);

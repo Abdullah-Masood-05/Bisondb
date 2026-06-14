@@ -51,6 +51,19 @@ FetchContent_MakeAvailable(monocypher)
 add_library(monocypher STATIC ${monocypher_SOURCE_DIR}/src/monocypher.c)
 target_include_directories(monocypher PUBLIC ${monocypher_SOURCE_DIR}/src)
 
+# ── Mbed-TLS (TLS 1.2/1.3 transport encryption) ───────────────────────────────
+# CMake-native, builds as static libs on MinGW/MSVC/Linux. We fetch the release
+# TARBALL (not a git tag): 3.6.x git checkouts need the `framework` submodule,
+# which the release tarball bundles — avoiding the most likely CI breakage.
+set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    MbedTLS
+    URL https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.2/mbedtls-3.6.2.tar.bz2
+)
+FetchContent_MakeAvailable(MbedTLS)
+
 # ── bisondb_core (static library) ─────────────────────────────────────────────
 add_library(bisondb_core STATIC
     src/core/version.cpp
@@ -71,6 +84,7 @@ add_library(bisondb_core STATIC
     src/core/query/index_manager.cpp
     src/core/query/query.cpp
     src/core/net/socket.cpp
+    src/core/net/tls.cpp
     src/core/query/database.cpp
     src/server/protocol.cpp
     src/client/client.cpp
@@ -78,10 +92,11 @@ add_library(bisondb_core STATIC
 if(WIN32)
     target_link_libraries(bisondb_core PUBLIC ws2_32)
     # bcrypt: BCryptGenRandom (OS CSPRNG) used by the crypto wrapper.
-    target_link_libraries(bisondb_core PUBLIC bcrypt)
+    # crypt32: Windows ROOT cert store, read by the TLS wrapper for System trust.
+    target_link_libraries(bisondb_core PUBLIC bcrypt crypt32)
 endif()
-# Monocypher is an implementation detail of the crypto wrapper; link privately.
-target_link_libraries(bisondb_core PRIVATE monocypher)
+# Monocypher and Mbed-TLS are implementation details of the crypto/TLS wrappers.
+target_link_libraries(bisondb_core PRIVATE monocypher MbedTLS::mbedtls)
 
 # ── bisondb_server (server library; bisond is a thin wrapper) ─────────────────
 add_library(bisondb_server STATIC
@@ -142,6 +157,7 @@ add_executable(bisondb_tests
     tests/test_query.cpp
     tests/test_concurrency.cpp
     tests/test_net.cpp
+    tests/test_tls.cpp
     tests/test_banner.cpp
     tests/test_json_relaxed.cpp
     tests/test_shell_parser.cpp
