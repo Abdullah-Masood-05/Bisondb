@@ -3,6 +3,7 @@
 #include "shell/printer.hpp"
 #include "shell/repl.hpp"
 
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -12,9 +13,14 @@ namespace {
 int usage() {
     std::cerr << "bisonsh " << bisondb::version() << " - BisonDB interactive shell\n\n"
               << "Usage: bisonsh [--connect host:port] [--no-color] [--no-banner]\n"
+              << "               [--username <user>] [--token <token>]\n"
               << "               [--eval '<stmt>[; <stmt>...]'] [-f script.bsh]\n\n"
               << "Default server: 127.0.0.1:27027. With --eval, -f, or piped stdin the\n"
-              << "shell runs non-interactively and exits non-zero on the first error.\n";
+              << "shell runs non-interactively and exits non-zero on the first error.\n\n"
+              << "Auth: pass --username (you'll be prompted for the password, or set\n"
+              << "BISONDB_PASSWORD) or --token (or set BISONDB_TOKEN). NEVER pass a password\n"
+              << "on the command line. Once connected, manage accounts with 'auth ...'.\n"
+              << "NOTE: the transport is not encrypted yet (no TLS) — trusted networks only.\n";
     return 1;
 }
 
@@ -50,6 +56,10 @@ int main(int argc, char** argv) {
             noColor = true;
         } else if (arg == "--no-banner") {
             noBanner = true;
+        } else if (arg == "--username" || arg == "-u") {
+            config.username = next();
+        } else if (arg == "--token") {
+            config.token = next();
         } else if (arg == "--eval") {
             evalText = next();
         } else if (arg == "-f") {
@@ -60,6 +70,16 @@ int main(int argc, char** argv) {
         } else {
             std::cerr << "bisonsh: unknown flag " << arg << "\n";
             return usage();
+        }
+    }
+
+    // Credentials never come from argv (process lists leak them): only env.
+    if (const char* pw = std::getenv("BISONDB_PASSWORD"); pw != nullptr) {
+        config.password = pw;
+    }
+    if (config.token.empty()) {
+        if (const char* tok = std::getenv("BISONDB_TOKEN"); tok != nullptr) {
+            config.token = tok;
         }
     }
 

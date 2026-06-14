@@ -1,11 +1,13 @@
 #include "shell/repl.hpp"
 
 #include "core/json_writer.hpp"
+#include "core/secure_input.hpp"
 #include "shell/printer.hpp"
 
 #include <chrono>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 
 namespace bisondb::shell {
 
@@ -20,16 +22,45 @@ constexpr const char* kHelpText = R"(Statements:
   db.<coll>.dropIndex("field")          db.<coll>.getIndexes()
   db.<coll>.drop()                      db.<coll>.compact()
   show collections                      show status
+  auth <...>                            accounts (see 'auth help')
   help                                  exit | quit
 
 Filters: {field: literal}, $eq $ne $gt $gte $lt $lte $in, $and $or, dotted
 paths. JSON is relaxed: unquoted keys, single quotes, trailing commas.
 )";
 
+constexpr const char* kAuthHelpText = R"(Auth:
+  auth login [<user>]                 prompt for password and log in
+  auth logout                         end the current session
+  auth whoami                         show the authenticated user and roles
+  auth passwd [<user>]                change a password (self needs old pw)
+  auth create-user <user> [<role>..]  admin: create a user (default role: read)
+  auth list-users                     admin: list users and roles
+  auth bootstrap <user>               first-run: create the first admin
+)";
+
 std::string formatMs(double ms) {
     char buf[32];
     std::snprintf(buf, sizeof(buf), "%.1f", ms);
     return buf;
+}
+
+std::string joinRoles(const std::vector<std::string>& roles) {
+    std::string out;
+    for (std::size_t i = 0; i < roles.size(); ++i) {
+        out += (i ? "," : "") + roles[i];
+    }
+    return out.empty() ? "(none)" : out;
+}
+
+std::vector<std::string> splitWords(const std::string& s) {
+    std::vector<std::string> out;
+    std::istringstream iss(s);
+    std::string word;
+    while (iss >> word) {
+        out.push_back(word);
+    }
+    return out;
 }
 
 } // namespace
@@ -79,7 +110,54 @@ client::BisonClient& Shell::client() {
         client_ =
             client::BisonClient::connect(config_.host, config_.port, config_.connectTimeoutMs);
     }
+    if (!autoAuthDone_) {
+        autoAuthDone_ = true; // attempt once; failures surface to the caller
+        autoAuthenticate();
+    }
     return *client_;
+}
+
+void Shell::autoAuthenticate() {
+    // Detect setup mode first so we can guide the user instead of failing.
+    try {
+        Value status = client_->serverStatus();
+        if (const Value* sec = status.asDocument().find("security"); sec && sec->is<Document>()) {
+            const Value* sm = sec->asDocument().find("setupMode");
+            if (sm && sm->is<bool>() && sm->get<bool>()) {
+                err_ << "server is in SETUP MODE — no users exist yet.\n"
+                        "create the first admin with:  auth bootstrap <username>\n";
+                return;
+            }
+        }
+    } catch (...) {
+        // Ignore; a real connection problem surfaces on the actual command.
+    }
+
+    if (config_.token.empty() && config_.username.empty()) {
+        return; // nothing configured (e.g. --no-auth server)
+    }
+    if (!config_.token.empty()) {
+        client_->authenticateToken(config_.token);
+        return;
+    }
+    std::string password = config_.password;
+    if (password.empty()) {
+        if (!config_.interactive) {
+            throw client::AuthError("AuthRequired",
+                                    "password required (set BISONDB_PASSWORD or use --token)");
+        }
+        password = promptPassword("Password for " + config_.username + ": ");
+    }
+    client_->authenticate(config_.username, password);
+}
+
+std::string Shell::promptPassword(const std::string& prompt) {
+    return readPasswordFromTty(prompt);
+}
+
+void Shell::printError(const std::string& code, const std::string& what) {
+    err_ << (config_.color ? ansi::kRed : "") << "E[" << code << "] " << what
+         << (config_.color ? ansi::kReset : "") << "\n";
 }
 
 void Shell::printValue(const Value& v) {
@@ -122,6 +200,17 @@ void Shell::printParseError(const std::string& statement, const ShellParseError&
 }
 
 bool Shell::executeStatement(const std::string& statement) {
+    // `auth ...` meta-commands are handled outside the db-statement grammar.
+    {
+        std::size_t start = statement.find_first_not_of(" \t\r\n");
+        if (start != std::string::npos) {
+            std::vector<std::string> words = splitWords(statement.substr(start));
+            if (!words.empty() && words[0] == "auth") {
+                return handleAuth(words);
+            }
+        }
+    }
+
     ShellCommand cmd;
     try {
         cmd = parseStatement(statement);
@@ -142,14 +231,130 @@ bool Shell::executeStatement(const std::string& statement) {
                  << "  is bisond running at " << config_.host << ":" << config_.port << "?\n";
             dropClient();
             return false;
+        } catch (const client::AuthError& e) {
+            printError(e.code(), e.what());
+            return false;
         } catch (const client::ServerError& e) {
-            err_ << (config_.color ? ansi::kRed : "") << "E[" << e.code() << "] " << e.what()
-                 << (config_.color ? ansi::kReset : "") << "\n";
+            printError(e.code(), e.what());
             return false;
         }
+    } catch (const client::AuthError& e) {
+        printError(e.code(), e.what());
+        if (e.code() == "AuthRequired") {
+            err_ << "  run 'auth login <user>' first\n";
+        }
+        return false;
     } catch (const client::ServerError& e) {
-        err_ << (config_.color ? ansi::kRed : "") << "E[" << e.code() << "] " << e.what()
-             << (config_.color ? ansi::kReset : "") << "\n";
+        printError(e.code(), e.what());
+        return false;
+    }
+}
+
+bool Shell::handleAuth(const std::vector<std::string>& args) {
+    // args[0] == "auth"
+    std::string sub = args.size() > 1 ? args[1] : "";
+    try {
+        if (sub.empty() || sub == "help") {
+            out_ << kAuthHelpText;
+            return true;
+        }
+        if (sub == "login") {
+            std::string user = args.size() > 2 ? args[2] : config_.username;
+            if (user.empty()) {
+                err_ << "usage: auth login <user>\n";
+                return false;
+            }
+            std::string pw = promptPassword("Password for " + user + ": ");
+            auto roles = client().authenticate(user, pw);
+            out_ << "logged in as " << user << " [" << joinRoles(roles) << "]\n";
+            return true;
+        }
+        if (sub == "logout") {
+            client().logout();
+            out_ << "logged out\n";
+            return true;
+        }
+        if (sub == "whoami") {
+            client::BisonClient& c = client();
+            if (!c.authenticated()) {
+                out_ << "not authenticated\n";
+            } else {
+                out_ << c.currentUser() << " [" << joinRoles(c.currentRoles()) << "]\n";
+            }
+            return true;
+        }
+        if (sub == "passwd") {
+            std::string target = args.size() > 2 ? args[2] : "";
+            client::BisonClient& c = client();
+            bool isSelf = target.empty() || target == c.currentUser();
+            std::string oldPw;
+            if (isSelf) {
+                oldPw = promptPassword("Current password: ");
+            }
+            std::string newPw = promptPassword("New password: ");
+            std::string confirm = promptPassword("Confirm new password: ");
+            if (newPw != confirm) {
+                err_ << "passwords do not match\n";
+                return false;
+            }
+            c.changePassword(newPw, oldPw, isSelf ? "" : target);
+            out_ << "password changed\n";
+            return true;
+        }
+        if (sub == "create-user") {
+            if (args.size() < 3) {
+                err_ << "usage: auth create-user <user> [<role>...]\n";
+                return false;
+            }
+            std::string user = args[2];
+            std::vector<std::string> roles(args.begin() + 3, args.end());
+            if (roles.empty()) {
+                roles.push_back("read");
+            }
+            std::string pw = promptPassword("Password for new user " + user + ": ");
+            std::string confirm = promptPassword("Confirm password: ");
+            if (pw != confirm) {
+                err_ << "passwords do not match\n";
+                return false;
+            }
+            client().createUser(user, pw, roles);
+            out_ << "created user " << user << " [" << joinRoles(roles) << "]\n";
+            return true;
+        }
+        if (sub == "list-users") {
+            for (const client::UserInfo& u : client().listUsers()) {
+                out_ << u.username << "  [" << joinRoles(u.roles) << "]"
+                     << (u.disabled ? "  (disabled)" : "") << "\n";
+            }
+            return true;
+        }
+        if (sub == "bootstrap") {
+            if (args.size() < 3) {
+                err_ << "usage: auth bootstrap <user>   (run this in setup mode)\n";
+                return false;
+            }
+            std::string user = args[2];
+            std::string token = promptPassword("Bootstrap token: ");
+            std::string pw = promptPassword("New admin password: ");
+            std::string confirm = promptPassword("Confirm password: ");
+            if (pw != confirm) {
+                err_ << "passwords do not match\n";
+                return false;
+            }
+            auto roles = client().bootstrapAdmin(token, user, pw);
+            out_ << "created first admin " << user << " [" << joinRoles(roles) << "]\n";
+            return true;
+        }
+        err_ << "unknown auth subcommand '" << sub << "' (try 'auth help')\n";
+        return false;
+    } catch (const client::AuthError& e) {
+        printError(e.code(), e.what());
+        return false;
+    } catch (const client::ServerError& e) {
+        printError(e.code(), e.what());
+        return false;
+    } catch (const net::NetError& e) {
+        printError("Network", e.what());
         return false;
     }
 }
@@ -269,11 +474,26 @@ void Shell::banner() {
         Value status = client().serverStatus();
         const Document& d = status.asDocument();
         out_ << d.find("name")->get<std::string>() << " " << d.find("version")->get<std::string>()
-             << " @ " << config_.host << ":" << config_.port << "\n";
+             << " @ " << config_.host << ":" << config_.port;
+        if (client_ && client_->authenticated()) {
+            out_ << "  (as " << client_->currentUser() << ")";
+        }
+        out_ << "\n";
+        // Surface the security posture: auth state + the loud no-TLS warning.
+        if (const Value* sec = d.find("security"); sec && sec->is<Document>()) {
+            const Document& s = sec->asDocument();
+            bool auth = s.find("auth") && s.find("auth")->is<bool>() && s.find("auth")->get<bool>();
+            out_ << (config_.color ? ansi::kDim : "")
+                 << (auth ? "auth: enabled" : "auth: DISABLED (--no-auth)")
+                 << " · transport: NOT encrypted (no TLS yet)"
+                 << (config_.color ? ansi::kReset : "") << "\n";
+        }
+    } catch (const client::AuthError& e) {
+        printError(e.code(), e.what());
     } catch (const std::exception& e) {
         err_ << "cannot reach " << config_.host << ":" << config_.port << ": " << e.what() << "\n";
     }
-    out_ << "type 'help' for the statement grammar\n";
+    out_ << "type 'help' for the statement grammar, 'auth help' for accounts\n";
 }
 
 int Shell::runInteractive() {

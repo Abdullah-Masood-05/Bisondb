@@ -22,6 +22,14 @@ struct ShellConfig {
     // Pre-rendered startup banner (see banner.hpp); printed once at the top
     // of runInteractive. Empty = no banner (scripted modes never set it).
     std::string bannerText;
+
+    // Auto-authentication at first connect. If `token` is set it is used to
+    // resume a session; otherwise `username` (+ `password`, or a no-echo prompt
+    // in interactive mode) is used. All empty => connect unauthenticated (fine
+    // for --no-auth servers).
+    std::string username;
+    std::string password;
+    std::string token;
 };
 
 // History persistence helpers (exposed for tests). The file holds one
@@ -49,7 +57,17 @@ class Shell {
 
   private:
     client::BisonClient& client();
-    void dropClient() { client_.reset(); }
+    void dropClient() {
+        client_.reset();
+        autoAuthDone_ = false;
+    }
+    // Performs the configured auto-login once per connection.
+    void autoAuthenticate();
+    // `auth ...` meta-commands (login/logout/whoami/create-user/list-users/
+    // passwd/bootstrap). Returns false on error (already printed).
+    bool handleAuth(const std::vector<std::string>& args);
+    std::string promptPassword(const std::string& prompt);
+    void printError(const std::string& code, const std::string& what);
     bool execute(const ShellCommand& cmd);
     void printDocs(const std::vector<Value>& docs);
     void printValue(const Value& v);
@@ -62,6 +80,7 @@ class Shell {
     std::ostream& err_;
     std::optional<client::BisonClient> client_;
     bool exitRequested_ = false;
+    bool autoAuthDone_ = false;
 };
 
 } // namespace bisondb::shell
