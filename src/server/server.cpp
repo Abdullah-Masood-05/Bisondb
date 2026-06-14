@@ -3,7 +3,10 @@
 #include "core/json_writer.hpp"
 
 #include <chrono>
+#include <cstdlib>
+#include <filesystem>
 #include <iostream>
+#include <stdexcept>
 
 namespace bisondb::server {
 
@@ -17,10 +20,83 @@ std::string timestamp() {
 
 } // namespace
 
-Server::Server(ServerConfig config) : config_(std::move(config)), db_(config_.dir) {}
+Server::Server(ServerConfig config) : config_(std::move(config)), db_(config_.dir) {
+    initAuth();
+}
 
 Server::~Server() {
     stop();
+}
+
+void Server::initAuth() {
+    if (!authActive()) {
+        // --no-auth: every client gets full access. Shout about it on every
+        // startup; the non-loopback bind refusal lives in start().
+        log("WARNING ============================================================");
+        log("WARNING  --no-auth: AUTHENTICATION IS DISABLED. Every client has");
+        log("WARNING  full access to all data and admin commands. Use only on a");
+        log("WARNING  trusted, loopback-only host. Never on a shared network.");
+        log("WARNING ============================================================");
+        return;
+    }
+
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::create_directories(config_.dir, ec);
+    users_ = std::make_unique<auth::UserStore>(config_.dir, config_.kdf);
+
+    if (!users_->empty()) {
+        return; // normal mode: users exist, clients must authenticate
+    }
+
+    // First run, no users. Either seed an admin from the environment, or enter
+    // setup mode and print a one-time bootstrap token.
+    if (!config_.initAdminUser.empty()) {
+        const char* pw = std::getenv("BISONDB_ADMIN_PASSWORD");
+        if (pw == nullptr || pw[0] == '\0') {
+            throw std::runtime_error("--init-admin set but BISONDB_ADMIN_PASSWORD is empty/unset");
+        }
+        users_->createUser(config_.initAdminUser, pw, {auth::Role::Admin});
+        log("info  admin user created: " + config_.initAdminUser);
+        return;
+    }
+
+    crypto::Token bt = crypto::generateToken();
+    {
+        std::lock_guard lock(bootstrapMutex_);
+        bootstrapToken_ = bt.raw;
+    }
+    setupMode_.store(true);
+    // Printed straight to stderr (even under --quiet) so an operator can copy
+    // it, but NEVER written to the structured log stream.
+    std::cerr << "\n==================== BisonDB SETUP MODE ====================\n"
+              << "No users exist yet. Create the first admin using this one-time\n"
+              << "bootstrap token (valid only until the first admin is created):\n\n"
+              << "    " << bt.raw << "\n\n"
+              << "  bisonsh           then:  auth bootstrap <username>\n"
+              << "  or offline:  bisonc auth create-admin --dir <dir> --username <u>\n\n"
+              << "WARNING: the connection is NOT encrypted (no TLS yet); credentials\n"
+              << "travel in clear text. Use only on trusted networks.\n"
+              << "============================================================\n\n";
+}
+
+bool Server::checkBootstrapToken(const std::string& presented) const {
+    std::lock_guard lock(bootstrapMutex_);
+    if (!setupMode_.load() || bootstrapToken_.empty()) {
+        return false;
+    }
+    return crypto::constantTimeEquals(presented, bootstrapToken_);
+}
+
+void Server::endSetupMode() {
+    std::lock_guard lock(bootstrapMutex_);
+    setupMode_.store(false);
+    bootstrapToken_.clear();
+}
+
+std::string Server::bootstrapToken() const {
+    std::lock_guard lock(bootstrapMutex_);
+    return bootstrapToken_;
 }
 
 void Server::log(const std::string& line) {
@@ -30,6 +106,11 @@ void Server::log(const std::string& line) {
 }
 
 void Server::start() {
+    if (!authActive() && config_.bind != "127.0.0.1" && config_.bind != "::1" &&
+        config_.bind != "localhost") {
+        throw std::runtime_error("--no-auth refuses to bind to a non-loopback address: " +
+                                 config_.bind);
+    }
     listener_ = std::make_unique<net::TcpListener>(config_.bind, config_.port);
     port_ = listener_->port();
     std::size_t threads =
@@ -78,6 +159,9 @@ void Server::serveConnection(net::TcpSocket socket, uint64_t connId) {
     }
     log("info  conn=" + std::to_string(connId) + " accepted");
 
+    // Per-connection auth state; lives for the whole connection lifetime.
+    ConnectionAuth conn;
+
     // Strictly sequential: read one request, write one response, repeat.
     while (!stopRequested_.load()) {
         std::optional<Value> request;
@@ -114,7 +198,7 @@ void Server::serveConnection(net::TcpSocket socket, uint64_t connId) {
         }
 
         auto begun = std::chrono::steady_clock::now();
-        Value response = dispatchCommand(*this, *request, socket);
+        Value response = dispatchCommand(*this, *request, socket, conn);
         auto durationMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                               std::chrono::steady_clock::now() - begun)
                               .count();

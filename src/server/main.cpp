@@ -45,15 +45,22 @@ void installSignalHandlers() {
 
 int usage() {
     std::cerr << "bisond " << bisondb::version() << " - BisonDB server\n\n"
-              << "Usage: bisond --dir <dbdir> [--port N] [--bind ADDR] [--threads N] [--quiet]\n\n"
-              << "  --dir     database directory (required)\n"
-              << "  --port    TCP port (default 27027)\n"
-              << "  --bind    bind address (default 127.0.0.1)\n"
-              << "  --threads worker threads (default: hardware concurrency)\n"
-              << "  --quiet   suppress per-request logging\n\n"
-              << "WARNING: bisond has NO authentication and NO TLS. It binds to loopback by\n"
-              << "default; binding to any other address exposes the full database to the\n"
-              << "network and is at the operator's own risk.\n";
+              << "Usage: bisond --dir <dbdir> [--port N] [--bind ADDR] [--threads N] [--quiet]\n"
+              << "              [--init-admin <user>] [--no-auth] [--token-ttl <sec>]\n\n"
+              << "  --dir         database directory (required)\n"
+              << "  --port        TCP port (default 27027)\n"
+              << "  --bind        bind address (default 127.0.0.1)\n"
+              << "  --threads     worker threads (default: hardware concurrency)\n"
+              << "  --quiet       suppress per-request logging\n"
+              << "  --init-admin  on first run, create this admin from $BISONDB_ADMIN_PASSWORD\n"
+              << "  --no-auth     DANGER: disable authentication entirely (loopback only)\n"
+              << "  --token-ttl   session-token lifetime in seconds (default 3600)\n\n"
+              << "Authentication is ENABLED by default. On first run with no users, bisond\n"
+              << "prints a one-time bootstrap token to create the first admin.\n\n"
+              << "WARNING: the transport is NOT encrypted yet (no TLS). Credentials and data\n"
+              << "travel in CLEAR TEXT over the socket. Use only on trusted networks until\n"
+              << "TLS ships. Binding to a non-loopback address exposes that clear-text\n"
+              << "traffic to the network.\n";
     return 1;
 }
 
@@ -80,6 +87,12 @@ int main(int argc, char** argv) {
             config.threads = static_cast<std::size_t>(std::stoul(next()));
         } else if (arg == "--quiet") {
             config.quiet = true;
+        } else if (arg == "--init-admin") {
+            config.initAdminUser = next();
+        } else if (arg == "--no-auth") {
+            config.noAuth = true;
+        } else if (arg == "--token-ttl") {
+            config.tokenTtlSeconds = static_cast<std::int64_t>(std::stoll(next()));
         } else if (arg == "--help" || arg == "-h") {
             usage();
             return 0;
@@ -94,7 +107,8 @@ int main(int argc, char** argv) {
     }
     if (config.bind != "127.0.0.1" && !config.quiet) {
         std::cerr << "WARNING: binding to " << config.bind
-                  << " exposes the database without authentication or TLS.\n";
+                  << " — the transport is unencrypted (no TLS yet), so credentials and\n"
+                     "data are exposed in clear text to the network.\n";
     }
 
     if (!config.quiet) {

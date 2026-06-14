@@ -12,6 +12,12 @@ namespace bisondb::server {
 inline constexpr std::size_t kMaxMessageSize = 16 * 1024 * 1024; // 16 MiB
 inline constexpr std::size_t kMinMessageSize = 5;                // empty BSON doc
 
+// Wire protocol revision reported by serverStatus. Bumped to 2 in the auth
+// phase: v2 servers speak the authenticate/authenticateToken handshake and
+// gate every other command behind it. v1 clients (no handshake) are rejected
+// with AuthRequired once any user exists.
+inline constexpr std::int32_t kProtocolVersion = 2;
+
 // The frame itself is unusable (bad length prefix): the connection must be
 // closed because the byte stream can no longer be trusted.
 class FrameError : public Error {
