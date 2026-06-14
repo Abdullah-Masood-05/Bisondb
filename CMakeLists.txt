@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(BisonDB LANGUAGES CXX VERSION 1.0.0)
+project(BisonDB LANGUAGES C CXX VERSION 1.0.0)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -38,10 +38,27 @@ FetchContent_MakeAvailable(Catch2)
 list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
 include(Catch)
 
+# ── Monocypher (vetted C99 crypto: Argon2id, BLAKE2b, constant-time compare) ──
+# Source-only dependency: the repo ships a Makefile, not CMake, so we populate
+# it and compile the single translation unit into our own target. Portable
+# C99 — builds identically on MinGW, MSVC, and GCC/Clang.
+FetchContent_Declare(
+    monocypher
+    GIT_REPOSITORY https://github.com/LoupVaillant/Monocypher.git
+    GIT_TAG        4.0.2
+)
+FetchContent_MakeAvailable(monocypher)
+add_library(monocypher STATIC ${monocypher_SOURCE_DIR}/src/monocypher.c)
+target_include_directories(monocypher PUBLIC ${monocypher_SOURCE_DIR}/src)
+
 # ── bisondb_core (static library) ─────────────────────────────────────────────
 add_library(bisondb_core STATIC
     src/core/version.cpp
     src/core/value.cpp
+    src/core/crypto/crypto.cpp
+    src/core/secure_input.cpp
+    src/core/auth/user_store.cpp
+    src/core/auth/token_store.cpp
     src/core/bson_decoder.cpp
     src/core/bson_encoder.cpp
     src/core/decimal128.cpp
@@ -60,7 +77,11 @@ add_library(bisondb_core STATIC
 )
 if(WIN32)
     target_link_libraries(bisondb_core PUBLIC ws2_32)
+    # bcrypt: BCryptGenRandom (OS CSPRNG) used by the crypto wrapper.
+    target_link_libraries(bisondb_core PUBLIC bcrypt)
 endif()
+# Monocypher is an implementation detail of the crypto wrapper; link privately.
+target_link_libraries(bisondb_core PRIVATE monocypher)
 
 # ── bisondb_server (server library; bisond is a thin wrapper) ─────────────────
 add_library(bisondb_server STATIC
@@ -104,6 +125,8 @@ target_link_libraries(bisonc PRIVATE bisondb_core bisondb_warnings)
 # ── bisondb_tests ─────────────────────────────────────────────────────────────
 add_executable(bisondb_tests
     tests/test_sanity.cpp
+    tests/test_crypto.cpp
+    tests/test_auth_store.cpp
     tests/test_value.cpp
     tests/test_bson_decoder.cpp
     tests/test_bson_encoder.cpp
@@ -124,6 +147,7 @@ add_executable(bisondb_tests
     tests/test_shell_parser.cpp
     tests/test_shell_printer.cpp
     tests/integration/test_server.cpp
+    tests/integration/test_auth_server.cpp
     tests/integration/test_shell.cpp
 )
 find_package(Threads REQUIRED)
