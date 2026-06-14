@@ -10,6 +10,23 @@ Document docArg(const std::string& cmd, const std::string& coll) {
     return Document{{"cmd", Value(cmd)}, {"coll", Value(coll)}};
 }
 
+bool isAuthCode(const std::string& code) {
+    return code == "AuthFailed" || code == "AuthRequired" || code == "TokenExpired" ||
+           code == "Forbidden";
+}
+
+std::vector<std::string> parseRoles(const Document& payload) {
+    std::vector<std::string> roles;
+    if (const Value* r = payload.find("roles"); r != nullptr && r->is<Array>()) {
+        for (const Value& v : r->asArray()) {
+            if (v.is<std::string>()) {
+                roles.push_back(v.get<std::string>());
+            }
+        }
+    }
+    return roles;
+}
+
 } // namespace
 
 BisonClient BisonClient::connect(const std::string& host, uint16_t port, int timeoutMs) {
@@ -17,7 +34,18 @@ BisonClient BisonClient::connect(const std::string& host, uint16_t port, int tim
     return BisonClient(std::move(socket));
 }
 
-Value BisonClient::command(Value request) {
+BisonClient BisonClient::connect(const std::string& host, uint16_t port, const Credentials& creds,
+                                 int timeoutMs) {
+    BisonClient c = connect(host, port, timeoutMs);
+    if (creds.usesToken()) {
+        c.authenticateToken(creds.token);
+    } else {
+        c.authenticate(creds.username, creds.password);
+    }
+    return c;
+}
+
+Value BisonClient::sendOnce(const Value& request) {
     server::writeFrame(socket_, request);
     std::optional<Value> response = server::readFrame(socket_);
     if (!response.has_value()) {
@@ -39,6 +67,146 @@ Value BisonClient::command(Value request) {
         }
     }
     throw ServerError(code, message);
+}
+
+Value BisonClient::command(Value request) {
+    try {
+        return sendOnce(request);
+    } catch (const ServerError& e) {
+        // One transparent re-auth attempt on token expiry, if we can.
+        if (e.code() == "TokenExpired" && !username_.empty() && !password_.empty()) {
+            authenticate(username_, password_); // refreshes token_, may throw AuthError
+            return sendOnce(request);           // retry once
+        }
+        if (isAuthCode(e.code())) {
+            throw AuthError(e.code(), e.what());
+        }
+        throw;
+    }
+}
+
+std::vector<std::string> BisonClient::authenticate(const std::string& username,
+                                                   const std::string& password) {
+    Value resp;
+    try {
+        resp = sendOnce(Value(Document{{"cmd", Value("authenticate")},
+                                       {"username", Value(username)},
+                                       {"password", Value(password)}}));
+    } catch (const ServerError& e) {
+        throw AuthError(e.code(), e.what());
+    }
+    const Document& d = resp.asDocument();
+    token_ = d.find("token") ? d.find("token")->get<std::string>() : "";
+    roles_ = parseRoles(d);
+    username_ = username;
+    password_ = password;
+    authenticated_ = true;
+    return roles_;
+}
+
+std::vector<std::string> BisonClient::authenticateToken(const std::string& token) {
+    Value resp;
+    try {
+        resp =
+            sendOnce(Value(Document{{"cmd", Value("authenticateToken")}, {"token", Value(token)}}));
+    } catch (const ServerError& e) {
+        throw AuthError(e.code(), e.what());
+    }
+    const Document& d = resp.asDocument();
+    token_ = token;
+    roles_ = parseRoles(d);
+    if (const Value* u = d.find("username"); u != nullptr && u->is<std::string>()) {
+        username_ = u->get<std::string>();
+    }
+    password_.clear(); // token-only session: no transparent refresh possible
+    authenticated_ = true;
+    return roles_;
+}
+
+void BisonClient::logout() {
+    try {
+        sendOnce(Value(Document{{"cmd", Value("logout")}}));
+    } catch (const ServerError&) {
+        // best-effort; clear local state regardless
+    }
+    authenticated_ = false;
+    username_.clear();
+    password_.clear();
+    token_.clear();
+    roles_.clear();
+}
+
+std::vector<std::string> BisonClient::bootstrapAdmin(const std::string& bootstrapToken,
+                                                     const std::string& username,
+                                                     const std::string& password) {
+    Value resp;
+    try {
+        Array roles{Value("admin")};
+        resp = sendOnce(Value(Document{{"cmd", Value("createUser")},
+                                       {"bootstrapToken", Value(bootstrapToken)},
+                                       {"username", Value(username)},
+                                       {"password", Value(password)},
+                                       {"roles", Value(std::move(roles))}}));
+    } catch (const ServerError& e) {
+        throw AuthError(e.code(), e.what());
+    }
+    const Document& d = resp.asDocument();
+    token_ = d.find("token") ? d.find("token")->get<std::string>() : "";
+    roles_ = parseRoles(d);
+    username_ = username;
+    password_ = password;
+    authenticated_ = true;
+    return roles_;
+}
+
+void BisonClient::createUser(const std::string& username, const std::string& password,
+                             const std::vector<std::string>& roles) {
+    Array roleArr;
+    for (const std::string& r : roles) {
+        roleArr.push_back(Value(r));
+    }
+    command(Value(Document{{"cmd", Value("createUser")},
+                           {"username", Value(username)},
+                           {"password", Value(password)},
+                           {"roles", Value(std::move(roleArr))}}));
+}
+
+bool BisonClient::dropUser(const std::string& username) {
+    Value resp =
+        command(Value(Document{{"cmd", Value("dropUser")}, {"username", Value(username)}}));
+    const Value* dropped = resp.asDocument().find("dropped");
+    return dropped != nullptr && dropped->is<bool>() && dropped->get<bool>();
+}
+
+std::vector<UserInfo> BisonClient::listUsers() {
+    Value resp = command(Value(Document{{"cmd", Value("listUsers")}}));
+    std::vector<UserInfo> out;
+    if (const Value* users = resp.asDocument().find("users"); users && users->is<Array>()) {
+        for (const Value& v : users->asArray()) {
+            const Document& u = v.asDocument();
+            UserInfo info;
+            if (const Value* n = u.find("username"))
+                info.username = n->get<std::string>();
+            info.roles = parseRoles(u);
+            if (const Value* dis = u.find("disabled"); dis && dis->is<bool>()) {
+                info.disabled = dis->get<bool>();
+            }
+            out.push_back(std::move(info));
+        }
+    }
+    return out;
+}
+
+void BisonClient::changePassword(const std::string& newPassword, const std::string& oldPassword,
+                                 const std::string& targetUser) {
+    Document req{{"cmd", Value("changePassword")}, {"newPassword", Value(newPassword)}};
+    if (!targetUser.empty()) {
+        req.append("username", Value(targetUser));
+    }
+    if (!oldPassword.empty()) {
+        req.append("oldPassword", Value(oldPassword));
+    }
+    command(Value(std::move(req)));
 }
 
 void BisonClient::ping() {

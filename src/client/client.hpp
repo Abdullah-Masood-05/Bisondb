@@ -22,6 +22,34 @@ class ServerError : public Error {
     std::string code_;
 };
 
+// Authentication/authorization failures, distinct from ServerError so callers
+// can react to login problems specifically. Codes: AuthFailed, AuthRequired,
+// TokenExpired, Forbidden.
+class AuthError : public Error {
+  public:
+    AuthError(std::string code, const std::string& message)
+        : Error(message), code_(std::move(code)) {}
+    const std::string& code() const noexcept { return code_; }
+
+  private:
+    std::string code_;
+};
+
+// How to authenticate at connect time: username+password, or a previously
+// obtained token.
+struct Credentials {
+    std::string username;
+    std::string password;
+    std::string token; // when non-empty, resume by token instead of password
+    bool usesToken() const { return !token.empty(); }
+};
+
+struct UserInfo {
+    std::string username;
+    std::vector<std::string> roles;
+    bool disabled = false;
+};
+
 struct FindOptions {
     std::size_t limit = 0;
     std::size_t skip = 0;
@@ -37,8 +65,44 @@ class BisonClient {
   public:
     static BisonClient connect(const std::string& host, uint16_t port, int timeoutMs = 5000);
 
+    // Connect and authenticate in one step. Throws AuthError on bad creds.
+    static BisonClient connect(const std::string& host, uint16_t port, const Credentials& creds,
+                               int timeoutMs = 5000);
+
     // Sends one request document and returns the (ok:true) response payload.
+    // If the session token has expired and password credentials are known,
+    // transparently re-authenticates once and retries.
     Value command(Value request);
+
+    // ── Authentication ────────────────────────────────────────────────────
+    // Log in with a password; stores the returned token and roles. Throws
+    // AuthError on failure. Returns the granted roles.
+    std::vector<std::string> authenticate(const std::string& username, const std::string& password);
+    // Resume a session from a token. Throws AuthError if invalid/expired.
+    std::vector<std::string> authenticateToken(const std::string& token);
+    void logout();
+
+    // First-run only: create the first admin using the bootstrap token printed
+    // by the server in setup mode. Leaves the connection authenticated.
+    std::vector<std::string> bootstrapAdmin(const std::string& bootstrapToken,
+                                            const std::string& username,
+                                            const std::string& password);
+
+    // User management (admin, except changePassword on self).
+    void createUser(const std::string& username, const std::string& password,
+                    const std::vector<std::string>& roles);
+    bool dropUser(const std::string& username);
+    std::vector<UserInfo> listUsers();
+    // Self-service: pass oldPassword, leave targetUser empty. Admin reset:
+    // set targetUser, oldPassword ignored.
+    void changePassword(const std::string& newPassword, const std::string& oldPassword = "",
+                        const std::string& targetUser = "");
+
+    // Connection auth info.
+    bool authenticated() const noexcept { return authenticated_; }
+    const std::string& currentUser() const noexcept { return username_; }
+    const std::vector<std::string>& currentRoles() const noexcept { return roles_; }
+    const std::string& sessionToken() const noexcept { return token_; }
 
     void ping();
     Value serverStatus();
@@ -62,7 +126,18 @@ class BisonClient {
   private:
     explicit BisonClient(net::TcpSocket socket) : socket_(std::move(socket)) {}
 
+    // One request/response exchange with no auto-reauth (used by the auth
+    // handshake itself, and by command() internally).
+    Value sendOnce(const Value& request);
+
     net::TcpSocket socket_;
+
+    // Session state for transparent re-auth and connection info.
+    bool authenticated_ = false;
+    std::string username_;
+    std::string password_; // retained for token refresh; empty if token-only
+    std::string token_;
+    std::vector<std::string> roles_;
 };
 
 } // namespace bisondb::client
